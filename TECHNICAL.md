@@ -1,4 +1,4 @@
-# WhataTax — Technical Design Document
+# Whale Tax — Technical Design Document
 
 > Companion to [RESEARCH.md](RESEARCH.md). RESEARCH.md is the *what/why*; this
 > document is the *how*. It is the implementation specification for the
@@ -10,7 +10,7 @@
 | **Django app label** | `whatax` |
 | **URL namespace** | `whatax:` |
 | **Verbose name** | Whale Tax |
-| **Status** | Pre-implementation (greenfield) |
+| **Status** | Implemented — initial full vertical (models + migration, ESI sync tasks, pricing, tax calc, payment matching, moon tracking, tabbed UI, unit tests) |
 
 ---
 
@@ -40,7 +40,7 @@
 
 ## 1. Architecture Overview
 
-WhataTax is a standard Alliance Auth (AA) community plugin: a Django app that
+Whale Tax is a standard Alliance Auth (AA) community plugin: a Django app that
 plugs into an existing AA installation via AA's hook system. It owns no user or
 character identity of its own — it consumes AA's identity model and EVE static
 data, and adds tax/accounting domain logic on top.
@@ -118,10 +118,10 @@ Tax rates are `DecimalField(max_digits=5, decimal_places=4)` (e.g. `0.1000` =
 
 ## 3. Prior Art & Reuse
 
-**Decision: WhataTax is self-contained and does *not* depend on `aa-moonmining`.**
+**Decision: Whale Tax is self-contained and does *not* depend on `aa-moonmining`.**
 `aa-moonmining` (Erik Kalkoken) is a solid app and covers much of the same
 moon-side ground (structure discovery, the observer ledger, extraction tracking,
-ore value estimation), but WhataTax owns its full data model for **flexibility**:
+ore value estimation), but Whale Tax owns its full data model for **flexibility**:
 
 - **No coupling** to another app's schema, migrations, or release cadence — our
   tax/payment domain drives the moon schema, not the other way around.
@@ -141,7 +141,7 @@ independent costs us no extra ESI plumbing.
 notification-YAML parsing details — read it for the field shapes, don't import
 it.
 
-The **tax, payment-matching, and notification** layers are WhataTax's own
+The **tax, payment-matching, and notification** layers are Whale Tax's own
 contribution and have no close prior art in the AA ecosystem.
 
 ---
@@ -205,6 +205,8 @@ correct.
 | `payment_wallet_division` | PositiveSmallInt | 1–7. |
 | `broadcast_webhook_url` | URLField | Default Discord webhook for corp-wide events. |
 | `janice_api_key` | Char(blank) | **Set in the Admin tab**, stored in the DB (see [§7](#7-pricing-service-janice) / [§16](#16-settings) security note). |
+| `reprocessing_yield` | Decimal(5,4) | Refined-value efficiency factor (e.g. `0.9060`). **Edited in the Admin tab** (moved out of settings); recorded on each snapshot for reproducibility. |
+| `mineral_price_basis` | Char choices | Which Janice figure values minerals: `split/buy/sell` × `immediate/top5` (default `split_immediate`). **Edited in the Admin tab**; recorded on each snapshot. |
 | `grace_period_days` | PositiveSmallInt | Pay-by window: `due_date = emitted_at + grace_period_days`; a record past it with balance owed becomes `overdue`. |
 | `tax_edit_window_days` | PositiveSmallInt | Days after `emitted_at` during which **staff** may edit a bill's `tax_due` (default `15`, [§5.4](#54-payments) `TaxRecordEdit`). |
 | `exclude_highsec` | Bool | Exclude all high-sec (≥0.5) mining from tax. |
@@ -270,7 +272,7 @@ officer drilldown so the carve-out is auditable.
 > `GET /corporations/{id}/structures/` ([§6.2](#62-endpoints-consumed)); it is
 > *not* a read/proxy of `aa-moonmining`'s structure/refinery models. We never
 > join across another app's schema or rely on its migrations. The only external
-> tables WhataTax reads are AA core identity (`User`, `CharacterOwnership`,
+> tables Whale Tax reads are AA core identity (`User`, `CharacterOwnership`,
 > `EveCharacter`, `EveCorporationInfo`) and `django-eveuniverse` static data
 > (`EveType`, `EveMoon`) — both stable, shared platform layers, not app peers.
 
@@ -303,7 +305,7 @@ officer drilldown so the carve-out is auditable.
 > sum the same date twice. See [§8](#8-mining-data-pipeline) and
 > [§19](#19-risks--open-questions).
 
-> 🔌 **Self-contained — no shared tables.** `MiningLedgerEntry` is WhataTax's own
+> 🔌 **Self-contained — no shared tables.** `MiningLedgerEntry` is Whale Tax's own
 > raw landing table, written by `sync_mining_ledger` from the observer endpoint
 > ([§6.2](#62-endpoints-consumed)). It is the **single source of truth for
 > mining** for *both* the tax pipeline (numerator of the bill) and moon
@@ -324,7 +326,10 @@ ledger entries).
 | `ore_type` | FK `EveType` PROTECT | |
 | `quantity` | BigInt | Summed across all alts + structures. |
 | `refined_value` | Decimal(20,2) | Snapshot of value at calc time. |
-| — | | `unique_together(tax_period, user, ore_type)` |
+| `reprocessing_yield_applied` | Decimal(5,4) null | Yield factor used at calc time (reproducibility). |
+| `price_basis_applied` | Char | Mineral price basis used at calc time (reproducibility). |
+| `is_excluded` | Bool | Mining counted but **not taxed** (sec-class / structure exclusion). Shown untaxed in the drilldown. |
+| — | | `unique_together(tax_period, user, ore_type, is_excluded)` — the excluded bucket is a separate priced row so a player mining the same ore at a taxed *and* an excluded structure is represented correctly; tax sums only `is_excluded=False`. |
 
 **`TaxRecord`** — the bill, per player/period. Emitted on the **1st of the month**
 for the *previous* month ([§9](#9-tax-calculation)/[§13](#13-scheduled-tasks-celery-beat)).
@@ -454,7 +459,7 @@ self-sufficient (no external scan data / no `aa-moonmining`).
 ## 6. ESI Integration
 
 All ESI access goes through `django-esi`: tokens are stored per-character with
-their granted scopes; the client auto-refreshes. WhataTax never handles refresh
+their granted scopes; the client auto-refreshes. Whale Tax never handles refresh
 tokens directly.
 
 ### 6.1 Required Scopes
@@ -512,9 +517,18 @@ class PriceProvider(Protocol):
     def refined_value(self, ore_type: EveType, quantity: int) -> Decimal: ...
 ```
 
-Two viable implementations; pick per the decision in [§19](#19-risks--open-questions):
+**Resolved (confirmed against the Janice v2 OpenAPI spec):** Janice exposes
+**no refined/reprocessed-ore valuation** — only market prices — so option 2
+below is **not viable**. Whale Tax uses option 1 exclusively.
 
-1. **Reprocess-then-price (recommended, fully controlled).**
+- Base URL: `https://janice.e-351.com/api/rest/v2` (`WHATAX_JANICE_BASE_URL`).
+- Auth: header **`X-ApiKey`** (key stored on `TaxConfiguration`, never logged).
+- Bulk price: **`POST /pricer?market=2`** (`2` = Jita), body `text/plain` =
+  one type id per line. Response: array of items with `itemType.eid` and
+  `immediatePrices` / `top5AveragePrices` → `{buyPrice, splitPrice, sellPrice,
+  …}`. The `mineral_price_basis` config picks the (group, field) pair.
+
+1. **Reprocess-then-price (the implementation, fully controlled).**
    `refined_value = Σ over materials m of (yield(ore, m) × mineral_price(m))`
    where `yield` comes from `EveTypeMaterial` (the SDE reprocessing output,
    normalized to the ore's reprocess batch size — ore reprocesses in fixed
@@ -527,9 +541,11 @@ Two viable implementations; pick per the decision in [§19](#19-risks--open-ques
    couples us to Janice's reprocessing-efficiency assumptions.
 
 **Reprocessing efficiency** (station/structure rigs/skills) materially changes
-refined value. Make it a configurable factor (`WHATAX_REPROCESSING_YIELD`,
-default e.g. `0.906`) applied uniformly, and record the factor on the snapshot
-so historical bills remain reproducible.
+refined value. It is a configurable factor on `TaxConfiguration.reprocessing_yield`
+(**edited in the Admin tab**, default `0.9060`), applied uniformly and recorded
+on each snapshot (`reprocessing_yield_applied`) so historical bills remain
+reproducible. The mineral price basis (`TaxConfiguration.mineral_price_basis`) is
+likewise Admin-tab config, recorded on the snapshot as `price_basis_applied`.
 
 **Caching & resilience:**
 - Cache mineral prices for a TTL (e.g. 1–6h) in Django cache; price drift
@@ -543,9 +559,10 @@ so historical bills remain reproducible.
   task, alert officers, and leave the period in `calculating` so it can be
   retried once pricing is back. (See "fail loud" in [§19](#19-risks--open-questions).)
 
-> The exact Janice REST base URL, auth header, and request body must be
-> confirmed against current Janice API docs before coding — treated as an open
-> item, not assumed here.
+> ✅ **Confirmed.** The base URL, `X-ApiKey` auth, and `POST /pricer` request /
+> response shapes above were verified against the Janice v2 OpenAPI spec
+> (`/api/rest/v2/swagger.json`). Implemented in `providers.py:JaniceClient` and
+> `core/pricing.py:ReprocessPriceProvider`.
 
 ---
 
@@ -561,7 +578,7 @@ so historical bills remain reproducible.
 [price_period] ──► MiningSnapshot.refined_value
 ```
 
-> 🔌 Every box above reads and writes **WhataTax-owned tables only** ([§5](#5-data-model)).
+> 🔌 Every box above reads and writes **Whale Tax-owned tables only** ([§5](#5-data-model)).
 > The pipeline's sole external inputs are ESI (raw landing) and AA-core/eveuniverse
 > for identity and ore metadata — there is no read path into `aa-moonmining` or any
 > other peer app, so a re-sync or schema change here is entirely within our control.
@@ -582,7 +599,10 @@ Edge cases that must be handled explicitly (don't let them silently drop ISK):
 
 - **Unowned character** (mined by someone with no AA account / token gone):
   ownership lookup fails. Bucket into an `UNATTRIBUTED` pseudo-player and
-  surface in the officer UI — never discard.
+  surface in the officer UI — never discard. *Implemented* as a lazily-created
+  sentinel `auth.User` (`whatax_unattributed`, `is_active=False`, unusable
+  password) via `core/aggregation.py:unattributed_user()`, so the non-null
+  `PROTECT` FK on snapshots/records stays satisfied without a nullable column.
 - **No main set:** fall back to default tax rate; flag the record.
 - **Ownership changed mid-month:** resolve ownership *as of the run*, and freeze
   `corporation_at_calc` on the `TaxRecord` for audit.
@@ -597,7 +617,7 @@ sync or a retroactive correction).
 ## 9. Tax Calculation
 
 **Schedule: emit on the 1st of each month for the *previous* month**, early (e.g.
-00:30). **All WhataTax times are EVE time (= UTC), always** — every period
+00:30). **All Whale Tax times are EVE time (= UTC), always** — every period
 boundary, `emitted_at`, `due_date`, and the edit window is computed in EVE time,
 fixed in code, never the host's local tz and not a configurable knob. Billing on
 the 1st (rather than chasing a "last day 23:59" cron) avoids the
@@ -885,6 +905,7 @@ of one tab, all writing the config models in [§5.1](#51-configuration):
 |---|---|---|
 | **API keys** | Janice API key (write-only field; shows *set / not set*), payment corp + wallet division, broadcast webhook. | `TaxConfiguration` |
 | **General tax** | Default / general tax rate, grace period, master enable switch. | `TaxConfiguration` |
+| **Pricing** | Reprocessing yield factor; Janice mineral price basis (split/buy/sell × immediate/top5). | `TaxConfiguration` |
 | **Corp overrides** | Add / edit / remove a per-corporation rate override (corp picker + rate + note). | `CorporationTaxRate` |
 | **Moon exclusions** | Toggle exclude HS / LS / NS; per-structure include/exclude toggles (with each structure's resolved sec class shown). | `TaxConfiguration` + `MiningStructure.is_active` |
 | **Good ore** | Per-structure good-ore membership. | `StructureGoodOre` |
@@ -920,14 +941,18 @@ a handful of pure-operational, deploy-time knobs that have no business in a UI.
 `app_settings.py` reads these from Django settings with safe defaults:
 
 ```python
-WHATAX_JANICE_BASE_URL       = "..."     # confirm against Janice docs
-WHATAX_REPROCESSING_YIELD    = 0.906     # refined-value efficiency factor
+WHATAX_JANICE_BASE_URL       = "https://janice.e-351.com/api/rest/v2"
+WHATAX_JANICE_MARKET_ID      = 2         # 2 = Jita
 WHATAX_PRICE_CACHE_TTL       = 3600      # seconds
 WHATAX_LEDGER_LOOKBACK_DAYS  = 30        # ESI observer depth
 WHATAX_DEAD_THRESHOLD        = 0.95      # good-ore fraction for "dead"
+
+# Seed defaults only — the live values are TaxConfiguration fields (Admin tab):
+WHATAX_REPROCESSING_YIELD_DEFAULT   = 0.906
+WHATAX_MINERAL_PRICE_BASIS_DEFAULT  = "split_immediate"
 ```
 
-> **Time is always EVE time (UTC) — not a setting.** WhataTax never reads a
+> **Time is always EVE time (UTC) — not a setting.** Whale Tax never reads a
 > timezone from settings or the host; all period boundaries, emission, due dates,
 > and the edit window are computed in EVE time, fixed in code. (There is
 > deliberately no `WHATAX_TIMEZONE`.)
@@ -935,8 +960,10 @@ WHATAX_DEAD_THRESHOLD        = 0.95      # good-ore fraction for "dead"
 > The **Janice API key is no longer a setting** either — it moved to the Admin
 > tab / `TaxConfiguration.janice_api_key`. This trades the env-secret guarantee
 > for a single config surface; see the security note in [§5.1](#51-configuration).
-> Sec banding for exclusions is likewise fixed in code (`core/moons.py`), not a
-> setting, so calc and UI can't drift.
+> The **reprocessing yield** and the **mineral price basis** likewise moved to
+> `TaxConfiguration` (Admin tab); the `*_DEFAULT` settings above only seed a new
+> config row. Sec banding for exclusions is fixed in code (`core/moons.py`), not
+> a setting, so calc and UI can't drift.
 
 ---
 
@@ -953,7 +980,7 @@ Operator-facing (for README, summarized here):
    step 10).
 5. `python manage.py migrate`
 6. `python manage.py collectstatic`
-7. Add the WhataTax tasks to `CELERYBEAT_SCHEDULE` (see [§13](#13-scheduled-tasks-celery-beat)).
+7. Add the Whale Tax tasks to `CELERYBEAT_SCHEDULE` (see [§13](#13-scheduled-tasks-celery-beat)).
 8. Restart AA (Gunicorn + Celery worker + beat).
 9. Add ESI tokens: a director-role char for structures/extractions, an
    accountant-role char for wallet, per [§6.1](#61-required-scopes).
@@ -961,8 +988,14 @@ Operator-facing (for README, summarized here):
     and set: Janice API key, default rate + per-corp overrides, payment
     corp/wallet, webhook, moon exclusions (HS/LS/NS + per-structure), and
     per-structure good ores. (No Django-admin step.)
-11. Preload static data: `python manage.py eveuniverse_load_types whatax` (ores
-    + reprocessing materials) so pricing has yields available.
+11. Preload static data so pricing has yields available. First set
+    `EVEUNIVERSE_LOAD_TYPE_MATERIALS = True` in `local.py` (otherwise no
+    `EveTypeMaterial` reprocessing-yield rows are created), then run
+    `python manage.py eveuniverse_load_types whatax --category_id 25` (category 25
+    = Asteroid, i.e. all ore types incl. moon ores; loading with materials enabled
+    also pulls in the referenced minerals/moon materials). The bare `whatax` arg
+    is only an app label — without an ID flag the command reports "No IDs
+    specified. Nothing to do." and loads nothing.
 
 ---
 
@@ -990,7 +1023,7 @@ Operator-facing (for README, summarized here):
 
 Carried forward from RESEARCH.md, with technical positions:
 
-1. **`aa-moonmining` — resolved: not a dependency.** WhataTax is self-contained
+1. **`aa-moonmining` — resolved: not a dependency.** Whale Tax is self-contained
    for flexibility ([§3](#3-prior-art--reuse)); `aa-moonmining` is reference-only.
 2. **Moon-dead denominator — resolved.** `total_good_ore_m3` comes from the
    `MoonminingExtractionStarted` notification's `oreVolumeByType`, not from
@@ -1012,9 +1045,10 @@ Carried forward from RESEARCH.md, with technical positions:
    correction must be a manual officer override on the `TaxRecord`.
 5. **Pricing failure handling.** Fail loud: never bill at zero on a Janice
    outage. Leave period in `calculating`, alert officers, retry.
-6. **Janice API specifics unconfirmed.** Base URL / auth header / refined-value
-   request shape must be verified against current docs before implementing
-   [§7](#7-pricing-service-janice).
+6. **Janice API specifics — resolved.** Confirmed against the v2 OpenAPI spec:
+   base `https://janice.e-351.com/api/rest/v2`, `X-ApiKey` header, bulk
+   `POST /pricer?market=2`. Janice has **no refined-ore mode**, so refined value
+   is always computed via reprocess-then-price ([§7](#7-pricing-service-janice)).
 7. **Reprocessing efficiency assumption.** Refined value depends on yield;
    make it configurable and record the factor on each snapshot for
    reproducibility.
@@ -1022,7 +1056,7 @@ Carried forward from RESEARCH.md, with technical positions:
    (→403). Detect and surface this distinctly in the UI.
 9. **Unattributed mining & unmatched payments.** Both must be visible and
    manually resolvable — money is never silently created or destroyed.
-10. **Timezone correctness — resolved.** WhataTax **always** uses EVE time
+10. **Timezone correctness — resolved.** Whale Tax **always** uses EVE time
     (= UTC): every period boundary, the 1st-of-month emission, `due_date`, the
     `overdue` transition, and the 15-day edit window are computed in EVE time,
     fixed in code — never host-local, not a configurable setting.

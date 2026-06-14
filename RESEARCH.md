@@ -1,4 +1,4 @@
-# WhataTax — Research & Design Document
+# Whale Tax — Research & Design Document
 
 ## Overview
 
