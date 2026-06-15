@@ -1,0 +1,35 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+{% load humanize %}
+
+{% block whatax_content %}
+{% include "whatax/_staff_subtabs.html" %}
+
+<div class="card">
+  <div class="card-header">{% translate "All payments and adjustments" %}</div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm table-striped whatax-paginate">
+      <thead><tr>
+        <th>{% translate "Character" %}</th>
+        <th>{% translate "Date" %}</th>
+        <th>{% translate "Amount" %}</th>
+        <th>{% translate "Remaining" %}</th>
+        <th>{% translate "Type" %}</th>
+      </tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr>
+          <td>{{ row.character_label }}</td>
+          <td>{{ row.date|date:"Y-m-d H:i" }}</td>
+          <td>{{ row.amount|intcomma }}</td>
+          <td>{% if row.remaining is not None %}{{ row.remaining|intcomma }}{% else %}—{% endif %}</td>
+          <td>{{ row.kind }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-muted">{% translate "None." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

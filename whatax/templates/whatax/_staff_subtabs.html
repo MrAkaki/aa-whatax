@@ -1,0 +1,19 @@
+{% load i18n %}
+{# Secondary tab strip inside the Staff tab (TECHNICAL.md §15.2). #}
+<ul class="nav nav-pills mb-3">
+  <li class="nav-item">
+    <a class="nav-link {% if active_subtab == 'overview' %}active{% endif %}" href="{% url 'whatax:staff' %}">
+      {% translate "Overview" %}
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if active_subtab == 'outstanding' %}active{% endif %}" href="{% url 'whatax:staff_outstanding' %}">
+      {% translate "Outstanding" %}
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if active_subtab == 'payments' %}active{% endif %}" href="{% url 'whatax:staff_payments' %}">
+      {% translate "Payments" %}
+    </a>
+  </li>
+</ul>

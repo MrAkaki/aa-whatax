@@ -1,0 +1,89 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+{% load humanize %}
+
+{% block whatax_content %}
+<div class="row">
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-header">{% translate "Frags" %}</div>
+      <div class="card-body">
+        <h6>{% translate "Current (recently popped)" %}</h6>
+        {% for bucket in current_frag_groups %}
+          <div class="small text-muted mt-2 mb-1">
+            {% if bucket.group %}{{ bucket.group.name }}{% else %}{% translate "Ungrouped" %}{% endif %}
+          </div>
+          <table class="table table-sm">
+            <thead><tr><th>{% translate "Moon" %}</th><th>{% translate "Popped" %}</th></tr></thead>
+            <tbody>
+            {% for frag in bucket.items %}
+              <tr><td>{{ frag.eve_moon|default:frag.structure }}</td><td>{{ frag.popped_at }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% empty %}
+          <p class="text-muted mb-0">{% translate "None" %}</p>
+        {% endfor %}
+        <h6 class="mt-3">{% translate "Upcoming (next 2 days)" %}</h6>
+        {% for bucket in upcoming_frag_groups %}
+          <div class="small text-muted mt-2 mb-1">
+            {% if bucket.group %}{{ bucket.group.name }}{% else %}{% translate "Ungrouped" %}{% endif %}
+          </div>
+          <table class="table table-sm">
+            <thead><tr><th>{% translate "Moon" %}</th><th>{% translate "Chunk arrival" %}</th></tr></thead>
+            <tbody>
+            {% for frag in bucket.items %}
+              <tr><td>{{ frag.eve_moon|default:frag.structure }}</td><td>{{ frag.chunk_arrival_time }}</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% empty %}
+          <p class="text-muted mb-0">{% translate "None" %}</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header">{% translate "My mining" %}</div>
+      <div class="card-body">
+        <p>{% translate "Last week" %}: <strong>{{ mined_week|intcomma }}</strong> {% translate "units" %}</p>
+        <p>{% translate "Last 30 days" %}: <strong>{{ mined_month|intcomma }}</strong> {% translate "units" %}</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-header">{% translate "My tax record" %}</div>
+      <div class="card-body">
+        {% if config.payment_corporation %}
+          <p class="small text-muted">
+            {% blocktranslate with corp=config.payment_corporation %}
+              Pay to {{ corp }}.
+            {% endblocktranslate %}
+          </p>
+        {% endif %}
+        <table class="table table-sm whatax-paginate">
+          <thead><tr>
+            <th>{% translate "Period" %}</th><th>{% translate "Charge" %}</th>
+            <th>{% translate "Balance" %}</th><th>{% translate "Due" %}</th><th>{% translate "Status" %}</th>
+          </tr></thead>
+          <tbody>
+          {% for r in records %}
+            <tr>
+              <td>{{ r.tax_period }}</td>
+              <td>{{ r.tax_due|intcomma }}</td>
+              <td class="{% if r.balance < 0 %}text-danger{% endif %}">{{ r.balance|intcomma }}</td>
+              <td>{{ r.due_date|date:"Y-m-d"|default:"—" }}</td>
+              <td><span class="badge bg-secondary">{{ r.get_status_display }}</span></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5" class="text-muted">{% translate "No tax records yet." %}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

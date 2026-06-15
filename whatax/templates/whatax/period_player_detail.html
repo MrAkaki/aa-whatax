@@ -1,0 +1,78 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+{% load humanize %}
+
+{% block whatax_content %}
+{% include "whatax/_staff_subtabs.html" %}
+
+<p>
+  <a href="{% url 'whatax:period' period.id %}">&larr; {% translate "Back to period" %} {{ period }}</a>
+</p>
+
+<h4>{{ player }} <span class="text-muted">— {{ period }}</span></h4>
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Mining breakdown by character & ore" %}</div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm">
+      <thead><tr>
+        <th>{% translate "Character" %}</th>
+        {% for ore in breakdown.ores %}<th>{{ ore }}</th>{% endfor %}
+      </tr></thead>
+      <tbody>
+      {% for c in breakdown.characters %}
+        <tr>
+          <td>{{ c.label }}</td>
+          {% for qty in c.cells %}
+            <td>{% if qty %}{{ qty|intcomma }}{% else %}—{% endif %}</td>
+          {% endfor %}
+        </tr>
+      {% empty %}
+        <tr><td colspan="{{ breakdown.ores|length|add:1 }}" class="text-muted">{% translate "No mining for this player in this period." %}</td></tr>
+      {% endfor %}
+      </tbody>
+      {% if breakdown.characters %}
+      <tfoot>
+        <tr class="fw-bold">
+          <td>{% translate "Total (units)" %}</td>
+          {% for qty in breakdown.totals_units %}<td>{{ qty|intcomma }}</td>{% endfor %}
+        </tr>
+        <tr class="fw-bold">
+          <td>{% translate "ISK value" %}</td>
+          {% for isk in breakdown.totals_isk %}<td>{{ isk|intcomma }}</td>{% endfor %}
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">{% translate "Tax calculation" %}</div>
+  <div class="card-body">
+    {% if record %}
+      <dl class="row mb-0">
+        <dt class="col-sm-4">{% translate "Total mined value" %}</dt>
+        <dd class="col-sm-8">{{ record.total_mined_value|intcomma }}</dd>
+
+        <dt class="col-sm-4">{% translate "Tax rate applied" %}</dt>
+        <dd class="col-sm-8">{{ record.tax_rate_applied }}</dd>
+
+        <dt class="col-sm-4">{% translate "Flat discount" %}</dt>
+        <dd class="col-sm-8">
+          {% if record.flat_discount_applied > 0 %}
+            −{{ record.flat_discount_applied|intcomma }}
+          {% else %}
+            {% translate "No discount" %}
+          {% endif %}
+        </dd>
+
+        <dt class="col-sm-4">{% translate "Tax due" %}</dt>
+        <dd class="col-sm-8">{{ record.tax_due|intcomma }}</dd>
+      </dl>
+    {% else %}
+      <p class="text-muted mb-0">{% translate "No tax record for this player in this period." %}</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

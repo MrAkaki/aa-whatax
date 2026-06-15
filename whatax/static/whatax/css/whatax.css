@@ -1,0 +1,26 @@
+/* Whale Tax app styles. */
+
+/* Click-to-sort table headers (see js/sort.js). */
+.whatax-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.whatax-sortable::after {
+  content: "";
+  display: inline-block;
+  width: 1em;
+  opacity: 0.4;
+  text-align: right;
+}
+
+.whatax-sortable.whatax-sort-asc::after {
+  content: "\25B2"; /* ▲ */
+  opacity: 1;
+}
+
+.whatax-sortable.whatax-sort-desc::after {
+  content: "\25BC"; /* ▼ */
+  opacity: 1;
+}

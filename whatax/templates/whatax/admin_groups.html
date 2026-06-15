@@ -1,0 +1,90 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+
+{% block whatax_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0">{% translate "Moon groups" %}</h5>
+  <a href="{% url 'whatax:admin' %}" class="btn btn-outline-secondary btn-sm">
+    <i class="fas fa-arrow-left"></i> {% translate "Back to admin" %}
+  </a>
+</div>
+
+<div class="alert alert-info small">
+  {% blocktranslate %}A moon group bundles mining structures popped on a shared schedule. The
+  <strong>interval (days)</strong> is the intended cadence between pops and is used later to project
+  pop times. A structure belongs to at most one group — assigning it to a group moves it out of any
+  other.{% endblocktranslate %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Create group" %}</div>
+  <div class="card-body">
+    <form method="post" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <input type="hidden" name="form" value="group">
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Name" %}</label>
+        {{ group_form.name }}
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Interval (days)" %}</label>
+        {{ group_form.schedule_interval_days }}
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm">{% translate "Create group" %}</button>
+      </div>
+    </form>
+    {% if group_form.errors %}<div class="text-danger small mt-2">{{ group_form.errors }}</div>{% endif %}
+  </div>
+</div>
+
+{% for group in groups %}
+  <div class="card mb-3">
+    <div class="card-header d-flex align-items-center justify-content-between">
+      <span>
+        {{ group.name }}
+        <span class="badge bg-secondary">{% blocktranslate count days=group.schedule_interval_days %}{{ days }} day{% plural %}{{ days }} days{% endblocktranslate %}</span>
+      </span>
+      <form method="post" action="{% url 'whatax:moon_group_delete' group.pk %}" class="d-inline">
+        {% csrf_token %}
+        <button class="btn btn-outline-danger btn-sm">{% translate "Delete group" %}</button>
+      </form>
+    </div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        {% for structure in group.structures.all %}
+          <span class="badge bg-primary d-inline-flex align-items-center gap-1">
+            {{ structure }}
+            <form method="post" action="{% url 'whatax:moon_group_remove_structure' structure.pk %}" class="d-inline">
+              {% csrf_token %}
+              <button class="btn btn-sm btn-link text-white p-0 m-0 lh-1" title="{% translate 'Remove' %}">&times;</button>
+            </form>
+          </span>
+        {% empty %}
+          <span class="text-muted">{% translate "No moons in this group yet." %}</span>
+        {% endfor %}
+      </div>
+      <form method="post" class="row g-2 align-items-end">
+        {% csrf_token %}
+        <input type="hidden" name="form" value="assign">
+        <input type="hidden" name="group" value="{{ group.pk }}">
+        <div class="col-auto">
+          <label class="form-label small mb-0">{% translate "Add moon" %}</label>
+          <select name="structure" class="form-select form-select-sm">
+            {% for structure in unassigned %}
+              <option value="{{ structure.pk }}">{{ structure }}</option>
+            {% empty %}
+              <option disabled>{% translate "No unassigned moons" %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-primary btn-sm" {% if not unassigned %}disabled{% endif %}>{% translate "Add to group" %}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% empty %}
+  <p class="text-muted">{% translate "No groups yet — create one above." %}</p>
+{% endfor %}
+{% endblock %}

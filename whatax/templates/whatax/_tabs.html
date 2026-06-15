@@ -1,0 +1,25 @@
+{% load i18n %}
+{# Tab strip — hides tabs the user can't access (TECHNICAL.md §14/§15). #}
+<ul class="nav nav-tabs">
+  {% if perms.whatax.basic_access %}
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'dashboard' %}active{% endif %}" href="{% url 'whatax:index' %}">
+        {% translate "Dashboard" %}
+      </a>
+    </li>
+  {% endif %}
+  {% if perms.whatax.manage_payments %}
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'staff' %}active{% endif %}" href="{% url 'whatax:staff' %}">
+        {% translate "Staff" %}
+      </a>
+    </li>
+  {% endif %}
+  {% if perms.whatax.admin_access %}
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'admin' %}active{% endif %}" href="{% url 'whatax:admin' %}">
+        {% translate "Admin" %}
+      </a>
+    </li>
+  {% endif %}
+</ul>

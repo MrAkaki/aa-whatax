@@ -125,9 +125,9 @@ ore value estimation), but Whale Tax owns its full data model for **flexibility*
 
 - **No coupling** to another app's schema, migrations, or release cadence — our
   tax/payment domain drives the moon schema, not the other way around.
-- **Per-structure** good-ore configuration, our own extraction/composition
-  storage, and freedom to extend matching, pricing, and notification logic
-  without working around an upstream model.
+- **Global default + per-structure** good-ore configuration, our own
+  extraction/composition storage, and freedom to extend matching, pricing, and
+  notification logic without working around an upstream model.
 - **Single install surface** — one app to deploy, one set of ESI tokens/scopes
   to reason about, no version-compatibility matrix against `aa-moonmining`.
 
@@ -227,6 +227,7 @@ correct.
 |---|---|---|
 | `corporation` | OneToOne `EveCorporationInfo` PROTECT | |
 | `tax_rate` | Decimal(5,4) | Applies to players whose **main** char is in this corp. |
+| `flat_discount` | Decimal(20,2) | ISK subtracted from each member's monthly charge; the charge floors at 0. Default 0. |
 | `note` | Char | Optional audit note. |
 
 **`MiningStructure`** — a corp-owned refinery/drill (an ESI mining *observer*).
@@ -242,13 +243,25 @@ correct.
 | `is_active` | Bool | **Per-structure exclusion toggle** (Admin tab). `False` = exclude this structure's mining from tax. |
 | `last_ledger_sync` | DateTime null | Watermark. |
 
-**`StructureGoodOre`** — which ores "count" at a structure.
+**`GoodOreDefault`** — the global good-ore set: ores that "count" at every
+structure by default. Seeded with all moon ore types by `whatax_seed_good_ores`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `ore_type` | FK `EveType` PROTECT, unique | |
+
+**`StructureGoodOre`** — per-structure override of the global default.
 
 | Field | Type | Notes |
 |---|---|---|
 | `structure` | FK `MiningStructure` CASCADE | |
 | `ore_type` | FK `EveType` PROTECT | |
+| `include` | Bool | `True` = good here even if not a global default; `False` = exclude this default ore here. |
 | — | | `unique_together(structure, ore_type)` |
+
+The **effective** good-ore set for a structure is `good_ore_ids_for()`:
+`(global defaults − structure excludes) ∪ structure includes`. Resolved live, so
+edits to either list apply to existing extractions on the next `recompute_dead`.
 
 **Moon / mining exclusions.** Configured in the Admin tab, applied as a filter
 in the tax pipeline ([§9](#9-tax-calculation)). Two independent, OR-combined
@@ -340,7 +353,8 @@ for the *previous* month ([§9](#9-tax-calculation)/[§13](#13-scheduled-tasks-c
 | `user` | FK `auth.User` PROTECT | |
 | `total_mined_value` | Decimal(20,2) | Σ of snapshot refined values. |
 | `tax_rate_applied` | Decimal(5,4) | Frozen at calc time. |
-| `original_tax_due` | Decimal(20,2) | `total_mined_value × rate` at emission — **immutable** audit baseline. |
+| `flat_discount_applied` | Decimal(20,2) | Corp flat discount actually subtracted at calc (≤ gross). Frozen for transparency; the bill reconciles as `total × rate − flat_discount_applied`. |
+| `original_tax_due` | Decimal(20,2) | `max(0, total_mined_value × rate − flat_discount_applied)` at emission — **immutable** audit baseline (post-discount). |
 | `tax_due` | Decimal(20,2) | **Effective** charge. Equals `original_tax_due` unless a staff market-correction edit applied ([§5.4](#54-payments) `TaxRecordEdit`). |
 | `amount_paid` | Decimal(20,2) | Σ matched payments. |
 | `emitted_at` | DateTime null | When the bill was emitted (the monthly run). Drives the pay-by `due_date` and the **15-day staff edit window**. |
@@ -636,10 +650,13 @@ last-day-of-month edge case and lets the ESI ledger settle before calc — see
    silently dropped.
 3. For each player with (non-excluded) mining in the period:
    - `total = Σ snapshot.refined_value`
-   - `rate = resolve_rate(player)`:
-     `CorporationTaxRate` for the **main char's** corp if it exists, else
-     `TaxConfiguration.default_tax_rate`.
-   - `charge = (total × rate).quantize(0.01, ROUND_HALF_UP)`
+   - `rate, flat_discount = resolve_rate(player)`:
+     `CorporationTaxRate` for the **main char's** corp if it exists (rate +
+     per-corp flat ISK discount), else `TaxConfiguration.default_tax_rate`
+     (no discount).
+   - `gross = (total × rate).quantize(0.01, ROUND_HALF_UP)`
+   - `flat_discount_applied = min(flat_discount, gross)` (a per-member discount,
+     applied each month, never below 0); `charge = gross − flat_discount_applied`.
    - Upsert `TaxRecord(tax_period, user, …)` with `original_tax_due = charge`,
      `tax_due = charge`, `emitted_at = now`,
      `due_date = now + grace_period_days`. The bill opens as a **negative
@@ -732,13 +749,16 @@ Computed in **volume (m³)**, since `oreVolumeByType` is volumetric and differen
 ores have different per-unit volumes:
 
 `dead = mined_good_ore_m3 / total_good_ore_m3 ≥ WHATAX_DEAD_THRESHOLD (0.95)`,
-counting **only** ores in the structure's `StructureGoodOre` set.
+counting **only** ores in the structure's effective good-ore set (the global
+`GoodOreDefault` ± per-structure `StructureGoodOre` overrides — see [§5](#5-data-model)).
 
-- **Denominator** (`total_good_ore_m3`): Σ of `ExtractionOre.volume_m3` where
-  `is_good_ore`, captured from the `MoonminingExtractionStarted` notification's
-  `oreVolumeByType` at extraction start ([§11.1](#111-moon-pop-drilled--fractured)).
-  No moon-scan import, no chunk-volume estimation, no external app needed — the
-  game tells us the exact composition of the chunk.
+- **Denominator** (`total_good_ore_m3`): Σ of `ExtractionOre.volume_m3` for ores
+  in the effective good-ore set, from the `MoonminingExtractionStarted`
+  notification's `oreVolumeByType` snapshot ([§11.1](#111-moon-pop-drilled--fractured)).
+  Recomputed live so good-ore config edits are retroactive. No moon-scan import,
+  no chunk-volume estimation, no external app — the game tells us the exact
+  composition. If the snapshot is missing or holds no good ore, the denominator
+  is left NULL and dead-detection skips (never a fabricated `0`).
 - **Numerator** (`mined_good_ore_m3`): for ledger rows on this structure for
   good ores **since `chunk_arrival_time`**, sum `quantity × EveType.volume`
   (per-unit m³ from `django-eveuniverse`). Recomputed by `update_moon_status`.
@@ -906,9 +926,9 @@ of one tab, all writing the config models in [§5.1](#51-configuration):
 | **API keys** | Janice API key (write-only field; shows *set / not set*), payment corp + wallet division, broadcast webhook. | `TaxConfiguration` |
 | **General tax** | Default / general tax rate, grace period, master enable switch. | `TaxConfiguration` |
 | **Pricing** | Reprocessing yield factor; Janice mineral price basis (split/buy/sell × immediate/top5). | `TaxConfiguration` |
-| **Corp overrides** | Add / edit / remove a per-corporation rate override (corp picker + rate + note). | `CorporationTaxRate` |
+| **Corp overrides** | Add / edit / remove a per-corporation override (corp picker + rate + optional flat ISK discount + note). | `CorporationTaxRate` |
 | **Moon exclusions** | Toggle exclude HS / LS / NS; per-structure include/exclude toggles (with each structure's resolved sec class shown). | `TaxConfiguration` + `MiningStructure.is_active` |
-| **Good ore** | Per-structure good-ore membership. | `StructureGoodOre` |
+| **Good ore** | Global default good-ore set + per-structure overrides. | `GoodOreDefault`, `StructureGoodOre` |
 | **Calc & records** | Run / re-run a period's calc; **waive** a `TaxRecord` entirely (forgive the bill, audit note). Amount *edits* are a staff action ([§15.2](#152-staff-tab--manage_payments)). | tasks + `TaxRecord` |
 
 ### 15.4 Routing

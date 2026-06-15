@@ -1,0 +1,112 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+
+{% block whatax_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0">{% translate "Good ore (moon dead-detection)" %}</h5>
+  <a href="{% url 'whatax:admin' %}" class="btn btn-outline-secondary btn-sm">
+    <i class="fas fa-arrow-left"></i> {% translate "Back to admin" %}
+  </a>
+</div>
+
+<div class="alert alert-info small">
+  {% blocktranslate %}A moon is "dead" once the configured fraction of its <strong>good ore</strong>
+  has been mined. The global default list applies to every structure; per-structure overrides add
+  or exclude an ore at one structure. Edits take effect on the next status recompute.{% endblocktranslate %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">
+    {% translate "Global default good ore" %}
+    <span class="badge bg-secondary">{{ defaults|length }}</span>
+  </div>
+  <div class="card-body">
+    <div class="d-flex flex-wrap gap-2 mb-3">
+      {% for d in defaults %}
+        <span class="badge bg-success d-inline-flex align-items-center gap-1">
+          {{ d.ore_type.name }}
+          <form method="post" action="{% url 'whatax:good_ore_default_delete' d.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button class="btn btn-sm btn-link text-white p-0 m-0 lh-1" title="{% translate 'Remove' %}">&times;</button>
+          </form>
+        </span>
+      {% empty %}
+        <span class="text-danger">
+          {% translate "No good ore configured — dead-detection is disabled. Run whatax_seed_good_ores or add ores below." %}
+        </span>
+      {% endfor %}
+    </div>
+    <form method="post" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <input type="hidden" name="form" value="default">
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Ore type" %}</label>
+        {{ default_form.ore_type }}
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm">{% translate "Add to defaults" %}</button>
+      </div>
+    </form>
+    {% if default_form.errors %}<div class="text-danger small mt-2">{{ default_form.errors }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">{% translate "Per-structure overrides" %}</div>
+  <div class="card-body">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>{% translate "Structure" %}</th>
+          <th>{% translate "Ore type" %}</th>
+          <th>{% translate "Effect" %}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in overrides %}
+          <tr>
+            <td>{{ o.structure }}</td>
+            <td>{{ o.ore_type.name }}</td>
+            <td>
+              {% if o.include %}<span class="badge bg-success">{% translate "Good here" %}</span>
+              {% else %}<span class="badge bg-danger">{% translate "Excluded here" %}</span>{% endif %}
+            </td>
+            <td class="text-end">
+              <form method="post" action="{% url 'whatax:structure_good_ore_delete' o.pk %}" class="d-inline">
+                {% csrf_token %}
+                <button class="btn btn-outline-danger btn-sm">{% translate "Remove" %}</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="4" class="text-muted">{% translate "No overrides; every structure uses the global default." %}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <form method="post" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <input type="hidden" name="form" value="override">
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Structure" %}</label>
+        {{ override_form.structure }}
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Ore type" %}</label>
+        {{ override_form.ore_type }}
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Effect" %}</label>
+        {{ override_form.include }}
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm">{% translate "Add / update override" %}</button>
+      </div>
+    </form>
+    {% if override_form.errors %}<div class="text-danger small mt-2">{{ override_form.errors }}</div>{% endif %}
+    <p class="small text-muted mt-2">
+      {% translate "Adding an override for a structure+ore that already has one updates it." %}
+    </p>
+  </div>
+</div>
+{% endblock %}

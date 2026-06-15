@@ -1,0 +1,172 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+{% load humanize %}
+
+{% block whatax_content %}
+<div class="alert alert-warning">
+  {% translate "Dangerous configuration surface. All Whale Tax setup lives here — there is no Django-admin step." %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Corporation ESI tokens" %}</div>
+  <div class="card-body">
+    <div class="row g-4">
+      <div class="col-md-6">
+        <h6>{% translate "Structures & moons" %}</h6>
+        <p class="small text-muted mb-2">
+          {% translate "Grant from a Director-role char. Covers corp structures, moon extractions and moon notifications." %}
+        </p>
+        <ul class="list-unstyled small">
+          {% for token in structure_tokens %}
+            <li class="d-flex align-items-center gap-2 mb-1">
+              <span>{{ token.character_name }}{% if token.corporation_name %} — {{ token.corporation_name }}{% endif %}</span>
+              <form method="post" action="{% url 'whatax:remove_token' token.pk %}" class="d-inline">
+                {% csrf_token %}
+                <button class="btn btn-outline-danger btn-sm">{% translate "Remove" %}</button>
+              </form>
+            </li>
+          {% empty %}
+            <li class="text-danger">{% translate "No token yet." %}</li>
+          {% endfor %}
+        </ul>
+        {% if not structure_tokens %}
+          <a href="{% url 'whatax:add_structures_token' %}" class="btn btn-primary btn-sm">
+            <i class="fas fa-plus"></i> {% translate "Add structures token" %}
+          </a>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <h6>{% translate "Payment wallet" %}</h6>
+        <p class="small text-muted mb-2">
+          {% translate "Grant from an Accountant-role char in the payment corp. Reads the wallet journal players pay into. The payment corporation is set from this token." %}
+        </p>
+        <p class="small mb-2">
+          {% translate "Payment corporation:" %}
+          {% if config.payment_corporation %}<strong>{{ config.payment_corporation }}</strong>
+          {% else %}<span class="text-danger">{% translate "none — add a wallet token" %}</span>{% endif %}
+        </p>
+        <ul class="list-unstyled small">
+          {% for token in wallet_tokens %}
+            <li class="d-flex align-items-center gap-2 mb-1">
+              <span>{{ token.character_name }}{% if token.corporation_name %} — {{ token.corporation_name }}{% endif %}</span>
+              <form method="post" action="{% url 'whatax:remove_token' token.pk %}" class="d-inline">
+                {% csrf_token %}
+                <button class="btn btn-outline-danger btn-sm">{% translate "Remove" %}</button>
+              </form>
+            </li>
+          {% empty %}
+            <li class="text-danger">{% translate "No token yet." %}</li>
+          {% endfor %}
+        </ul>
+        {% if not wallet_tokens %}
+          <a href="{% url 'whatax:add_wallet_token' %}" class="btn btn-primary btn-sm">
+            <i class="fas fa-plus"></i> {% translate "Add wallet token" %}
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">
+    {% translate "Configuration" %}
+    — {% translate "Janice key:" %}
+    {% if janice_key_set %}<span class="badge bg-success">{% translate "set" %}</span>
+    {% else %}<span class="badge bg-danger">{% translate "not set" %}</span>{% endif %}
+  </div>
+  <div class="card-body">
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="form" value="config">
+      {{ form.as_p }}
+      <button class="btn btn-primary">{% translate "Save configuration" %}</button>
+    </form>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Per-corporation tax overrides" %}</div>
+  <div class="card-body">
+    <ul class="list-unstyled mb-3">
+      {% for cr in corp_rates %}
+        <li class="d-flex align-items-center gap-2 mb-1">
+          <span>{{ cr.corporation }} — {{ cr.tax_rate }}{% if cr.flat_discount %} − {{ cr.flat_discount|intcomma }} {% translate "ISK flat" %}{% endif %}{% if cr.note %} ({{ cr.note }}){% endif %}</span>
+          <form method="post" action="{% url 'whatax:corp_rate_delete' cr.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button class="btn btn-outline-danger btn-sm">{% translate "Remove" %}</button>
+          </form>
+        </li>
+      {% empty %}
+        <li class="text-muted">{% translate "No overrides; everyone pays the default rate." %}</li>
+      {% endfor %}
+    </ul>
+    <form method="post" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <input type="hidden" name="form" value="corp_rate">
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Corporation" %}</label>
+        {{ corp_rate_form.corporation }}
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Tax rate" %}</label>
+        {{ corp_rate_form.tax_rate }}
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Flat discount (ISK)" %}</label>
+        {{ corp_rate_form.flat_discount }}
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Note" %}</label>
+        {{ corp_rate_form.note }}
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm">{% translate "Add / update override" %}</button>
+      </div>
+    </form>
+    {% if corp_rate_form.errors %}
+      <div class="text-danger small mt-2">{{ corp_rate_form.errors }}</div>
+    {% endif %}
+    <p class="small text-muted mt-2">
+      {% translate "Adding an override for a corp that already has one updates it." %}
+    </p>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Good ore (moon dead-detection)" %}</div>
+  <div class="card-body">
+    <p class="small text-muted mb-2">
+      {% translate "Configure which ores count toward a moon being \"dead\": the global default set and per-structure overrides." %}
+    </p>
+    <a href="{% url 'whatax:admin_good_ores' %}" class="btn btn-primary btn-sm">
+      <i class="fas fa-gem"></i> {% translate "Manage good ore" %}
+    </a>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Moon groups" %}</div>
+  <div class="card-body">
+    <p class="small text-muted mb-2">
+      {% translate "Group moons popped on a shared schedule and set each group's pop interval (days)." %}
+    </p>
+    <a href="{% url 'whatax:admin_groups' %}" class="btn btn-primary btn-sm">
+      <i class="fas fa-layer-group"></i> {% translate "Manage moon groups" %}
+    </a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">{% translate "Calc & records" %}</div>
+  <div class="card-body">
+    <form method="post" action="{% url 'whatax:run_calc' %}" class="row g-2">
+      {% csrf_token %}
+      <div class="col-auto"><input type="number" name="year" class="form-control" placeholder="{% translate 'Year' %}"></div>
+      <div class="col-auto"><input type="number" name="month" class="form-control" placeholder="{% translate 'Month' %}"></div>
+      <div class="col-auto"><button class="btn btn-danger">{% translate "Run / re-run calc" %}</button></div>
+    </form>
+    <p class="small text-muted mt-2">{% translate "Re-running is idempotent: it preserves payments and staff edits." %}</p>
+  </div>
+</div>
+{% endblock %}

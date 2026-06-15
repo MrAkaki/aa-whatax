@@ -1,0 +1,37 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+{% load humanize %}
+
+{% block whatax_content %}
+{% include "whatax/_staff_subtabs.html" %}
+
+{% include "whatax/_mining_months.html" %}
+
+<div class="card">
+  <div class="card-header">
+    {% blocktranslate with year=selected_year month=selected_month|stringformat:"02d" %}Mining for {{ year }}-{{ month }}{% endblocktranslate %}
+  </div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm table-striped whatax-paginate">
+      <thead><tr>
+        <th>{% translate "Miner" %}</th>
+        <th>{% translate "Structure" %}</th>
+        <th>{% translate "Ore" %}</th>
+        <th class="text-end">{% translate "Units" %}</th>
+      </tr></thead>
+      <tbody>
+      {% for row in mining_rows %}
+        <tr>
+          <td{% if not row.is_registered %} class="text-danger"{% endif %}>{{ row.miner_label }}</td>
+          <td>{{ row.structure }}</td>
+          <td>{{ row.ore }}</td>
+          <td class="text-end">{{ row.units|intcomma }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="text-muted">{% translate "No mining for this month." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

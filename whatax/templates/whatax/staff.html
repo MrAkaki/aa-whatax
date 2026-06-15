@@ -1,0 +1,143 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+{% load humanize %}
+
+{% block whatax_content %}
+{% include "whatax/_staff_subtabs.html" %}
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Total estimated ore value per period (last 6 months)" %}</div>
+  <div class="card-body">
+    {% if bars %}
+      <div class="d-flex align-items-end justify-content-around gap-3" style="height: 18rem;">
+        {% for bar in bars %}
+          <div class="d-flex flex-column align-items-center justify-content-end h-100" style="flex: 1 1 0;">
+            <div class="small text-muted mb-1">{{ bar.value|intcomma }}</div>
+            <div class="bg-primary w-100 rounded-top" style="height: {{ bar.pct }}%; min-height: 2px;"
+                 title="{{ bar.label }}: {{ bar.value|intcomma }}"></div>
+            <div class="small mt-1">{{ bar.label }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="text-muted mb-0">{% translate "No periods to chart yet." %}</p>
+    {% endif %}
+  </div>
+</div>
+
+<form method="get" class="row g-2 mb-3">
+  <div class="col-auto">
+    <select name="period" class="form-select" onchange="this.form.submit()">
+      {% for p in periods %}
+        <option value="{{ p.id }}" {% if period and p.id == period.id %}selected{% endif %}>{{ p }} ({{ p.get_state_display }})</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-auto">
+    {% if period %}<a class="btn btn-outline-primary" href="{% url 'whatax:period' period.id %}">{% translate "Open period detail" %}</a>{% endif %}
+  </div>
+</form>
+
+{% include "whatax/_mining_months.html" %}
+
+{% for bucket in structure_groups %}
+<div class="card mb-3">
+  <div class="card-header">
+    {% if bucket.group %}{% translate "Structures" %} — {{ bucket.group.name }}
+      <span class="badge bg-secondary">{% blocktranslate count days=bucket.group.schedule_interval_days %}{{ days }} day{% plural %}{{ days }} days{% endblocktranslate %}</span>
+    {% else %}{% translate "Structures" %} — {% translate "Ungrouped" %}{% endif %}
+  </div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm table-striped whatax-paginate">
+      <thead><tr>
+        <th>{% translate "Structure" %}</th><th>{% translate "System" %}</th>
+        <th>{% translate "Next pop" %}</th><th>{% translate "Planned pop" %}</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for s in bucket.items %}
+        <tr>
+          <td>{{ s.name|default:s.structure_id }}</td>
+          <td>{{ s.eve_solar_system.name|default:"—" }}</td>
+          <td>{% if s.next_pop %}{{ s.next_pop|date:"Y-m-d H:i" }}{% else %}<span class="text-muted">{% translate "none scheduled" %}</span>{% endif %}</td>
+          <td>{% if s.planned_pop_at %}{{ s.planned_pop_at|date:"Y-m-d H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+          <td>{% if not s.is_active %}<span class="badge bg-secondary">{% translate "inactive" %}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% empty %}
+<div class="card mb-3">
+  <div class="card-header">{% translate "Structures" %}</div>
+  <div class="card-body"><p class="text-muted mb-0">{% translate "No structures." %}</p></div>
+</div>
+{% endfor %}
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Records" %} — {{ period|default:"—" }}</div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm table-striped whatax-paginate">
+      <thead><tr>
+        <th>{% translate "Player" %}</th><th>{% translate "Mined value" %}</th>
+        <th>{% translate "Discount" %}</th><th>{% translate "Charge" %}</th>
+        <th>{% translate "Paid" %}</th><th>{% translate "Balance" %}</th><th>{% translate "Status" %}</th>
+        <th>{% translate "Actions" %}</th>
+      </tr></thead>
+      <tbody>
+      {% for r in records %}
+        <tr>
+          <td>{{ r.user }}</td>
+          <td>{{ r.total_mined_value|intcomma }}</td>
+          <td>{% if r.flat_discount_applied %}−{{ r.flat_discount_applied|intcomma }}{% else %}—{% endif %}</td>
+          <td>{{ r.tax_due|intcomma }}</td>
+          <td>{{ r.amount_paid|intcomma }}</td>
+          <td class="{% if r.balance < 0 %}text-danger{% endif %}">{{ r.balance|intcomma }}</td>
+          <td><span class="badge bg-secondary">{{ r.get_status_display }}</span></td>
+          <td>
+            <details>
+              <summary class="btn btn-sm btn-outline-primary">{% translate "Add payment" %}</summary>
+              <form method="post" action="{% url 'whatax:record_add_payment' r.id %}" class="mt-2" style="min-width: 14rem;">
+                {% csrf_token %}
+                <p class="small text-muted mb-1">{% translate "Record a payment made outside the corp wallet." %}</p>
+                {{ payment_form.as_p }}
+                <button class="btn btn-sm btn-primary">{% translate "Record payment" %}</button>
+              </form>
+            </details>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="7" class="text-muted">{% translate "No records." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">{% translate "Unmatched payments" %}</div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm whatax-paginate">
+      <thead><tr><th>{% translate "Amount" %}</th><th>{% translate "Date" %}</th><th>{% translate "Payer" %}</th><th></th></tr></thead>
+      <tbody>
+      {% for pmt in unmatched_payments %}
+        <tr>
+          <td>{{ pmt.amount|intcomma }}</td>
+          <td>{{ pmt.date|date:"Y-m-d" }}</td>
+          <td>{{ pmt.user|default:pmt.character_id }}</td>
+          <td>
+            <form method="post" action="{% url 'whatax:payment_match' pmt.id %}" class="d-flex gap-1">
+              {% csrf_token %}
+              <input type="number" name="record" class="form-control form-control-sm" placeholder="{% translate 'Record id' %}">
+              <button class="btn btn-sm btn-primary">{% translate "Match" %}</button>
+            </form>
+          </td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="4" class="text-muted">{% translate "None." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

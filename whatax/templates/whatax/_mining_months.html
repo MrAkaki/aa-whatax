@@ -1,0 +1,16 @@
+{% load i18n %}
+<div class="card mb-3">
+  <div class="card-header">{% translate "Monthly mining by structure" %}</div>
+  <div class="card-body">
+    {% if mining_months %}
+      <div class="d-flex flex-wrap gap-2">
+        {% for m in mining_months %}
+          <a class="btn btn-sm {% if selected_year == m.year and selected_month == m.month %}btn-primary{% else %}btn-outline-primary{% endif %}"
+             href="{% url 'whatax:staff_mining_month' m.year m.month %}">{{ m.year }}-{{ m.month|stringformat:"02d" }}</a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="text-muted mb-0">{% translate "No mining recorded yet." %}</p>
+    {% endif %}
+  </div>
+</div>

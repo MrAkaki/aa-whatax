@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aa-whatax"
+dynamic = ["version"]
+description = "Moon-mining tax & accounting plugin for Alliance Auth."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Alex Vargas" }]
+keywords = ["eve-online", "allianceauth", "alliance-auth", "moon-mining", "tax"]
+classifiers = [
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Internet :: WWW/HTTP",
+]
+
+# Versions intentionally left open / AA-pinned: do not pin Django independently —
+# follow the version Alliance Auth currently requires (see TECHNICAL.md §2).
+dependencies = [
+    "allianceauth>=4.0.0",
+    "django-esi>=5.0.0",
+    "django-eveuniverse>=1.0.0",
+    "allianceauth-app-utils>=1.18.0",
+    "dhooks-lite>=1.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "factory-boy",
+    "freezegun",
+    "coverage",
+]
+
+[project.urls]
+Homepage = "https://github.com/MrAkaki/aa-whatax"
+Source = "https://github.com/MrAkaki/aa-whatax"
+
+[tool.setuptools.dynamic]
+version = { attr = "whatax.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["whatax*"]
+
+[tool.setuptools.package-data]
+whatax = ["templates/**/*", "static/**/*"]

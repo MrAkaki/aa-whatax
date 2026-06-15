@@ -1,0 +1,76 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+{% load humanize %}
+
+{% block whatax_content %}
+{% include "whatax/_staff_subtabs.html" %}
+
+<h4>{% translate "Period" %} {{ period }} <span class="badge bg-info">{{ period.get_state_display }}</span></h4>
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Records & staff actions" %}</div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm whatax-paginate">
+      <thead><tr>
+        <th>{% translate "id" %}</th><th>{% translate "Player" %}</th>
+        <th>{% translate "Discount" %}</th><th>{% translate "Charge" %}</th>
+        <th>{% translate "Balance" %}</th><th>{% translate "Status" %}</th><th>{% translate "Actions" %}</th>
+      </tr></thead>
+      <tbody>
+      {% for r in records %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td><a href="{% url 'whatax:period_player' period.id r.user_id %}">{{ r.user }}</a></td>
+          <td>{% if r.flat_discount_applied %}−{{ r.flat_discount_applied|intcomma }}{% else %}—{% endif %}</td>
+          <td>{{ r.tax_due|intcomma }}</td>
+          <td class="{% if r.balance < 0 %}text-danger{% endif %}">{{ r.balance|intcomma }}</td>
+          <td>{{ r.get_status_display }}</td>
+          <td>
+            <details>
+              <summary class="btn btn-sm btn-outline-secondary">{% translate "Adjust / Edit" %}</summary>
+              <form method="post" action="{% url 'whatax:record_adjust' r.id %}" class="mt-2">
+                {% csrf_token %}{{ adjust_form.as_p }}
+                <button class="btn btn-sm btn-primary">{% translate "Add/remove balance" %}</button>
+              </form>
+              <form method="post" action="{% url 'whatax:record_edit_tax' r.id %}" class="mt-2">
+                {% csrf_token %}{{ edit_form.as_p }}
+                <button class="btn btn-sm btn-warning">{% translate "Edit tax (≤window)" %}</button>
+              </form>
+              {% if perms.whatax.admin_access %}
+                <form method="post" action="{% url 'whatax:record_waive' r.id %}" class="mt-2">
+                  {% csrf_token %}{{ waive_form.as_p }}
+                  <button class="btn btn-sm btn-danger">{% translate "Waive" %}</button>
+                </form>
+              {% endif %}
+            </details>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card mt-3">
+  <div class="card-header">{% translate "Unregistered characters (untracked miners)" %}</div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm whatax-paginate">
+      <thead><tr>
+        <th>{% translate "Character" %}</th><th>{% translate "Refined value" %}</th>
+        <th>{% translate "Tax" %}</th>
+      </tr></thead>
+      <tbody>
+      {% for row in unregistered %}
+        <tr>
+          <td><a class="text-danger" href="{% url 'whatax:period_unregistered' period.id row.character_id %}">{{ row.label }}</a></td>
+          <td>{{ row.refined_value|intcomma }}</td>
+          <td>{{ row.tax_due|intcomma }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="3" class="text-muted">{% translate "None." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

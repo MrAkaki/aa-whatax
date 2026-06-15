@@ -1,0 +1,33 @@
+{% load i18n %}
+{% load navactive %}
+
+{# Custom Whale Tax sidebar item: a whale silhouette with a "$" layered on top.
+   Font Awesome Free has no whale glyph, and this item renders in the global AA
+   sidebar where the app's own CSS isn't loaded, so the icon is a self-contained
+   inline SVG using currentColor (matches the theme) with all styling inline. #}
+<li>
+    <a class="{% navactive request item.navactive|join:' ' %}" href="{% url item.url_name %}">
+        <span class="whatax-menu-icon" aria-hidden="true"
+              style="position:relative;display:inline-block;width:1.25em;height:1em;vertical-align:-0.125em;text-align:center;">
+            <svg viewBox="0 0 64 64" width="100%" height="100%" fill="currentColor"
+                 style="display:block;opacity:.55;">
+                <!-- body -->
+                <ellipse cx="30" cy="37" rx="26" ry="16"/>
+                <!-- tail flukes -->
+                <path d="M50 37 L64 24 L60 37 L64 50 Z"/>
+                <!-- spout -->
+                <path d="M16 21 C 13 14 14 9 18 5" fill="none" stroke="currentColor"
+                      stroke-width="3" stroke-linecap="round"/>
+                <path d="M19 21 C 19 14 22 10 27 7" fill="none" stroke="currentColor"
+                      stroke-width="3" stroke-linecap="round"/>
+            </svg>
+            <span style="position:absolute;inset:0;display:flex;align-items:center;
+                         justify-content:center;font-weight:800;font-size:.8em;line-height:1;">$</span>
+        </span>
+        {% translate item.text %}
+
+        {% if item.count != None %}
+            <span class="badge">{{ item.count }}</span>
+        {% endif %}
+    </a>
+</li>
