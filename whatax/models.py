@@ -244,7 +244,7 @@ class GoodOreDefault(models.Model):
     plus its includes (see ``StructureGoodOre`` and ``core.moons.good_ore_ids_for``).
     """
 
-    ore_type = models.ForeignKey(EveType, on_delete=models.PROTECT, related_name="+", unique=True)
+    ore_type = models.OneToOneField(EveType, on_delete=models.PROTECT, related_name="+")
 
     def __str__(self):
         return str(self.ore_type)

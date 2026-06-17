@@ -23,11 +23,10 @@ class Migration(migrations.Migration):
                 ("id", models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
                 (
                     "ore_type",
-                    models.ForeignKey(
+                    models.OneToOneField(
                         on_delete=django.db.models.deletion.PROTECT,
                         related_name="+",
                         to="eveuniverse.evetype",
-                        unique=True,
                     ),
                 ),
             ],
