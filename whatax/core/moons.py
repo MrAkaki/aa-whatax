@@ -75,8 +75,18 @@ _EPOCH_DIFF = 11644473600  # seconds between 1601-01-01 and 1970-01-01
 
 
 def ldap_to_datetime(value) -> dt.datetime:
-    """Convert an LDAP/FILETIME integer to a UTC ``datetime``."""
-    seconds = int(value) / 10_000_000 - _EPOCH_DIFF
+    """Convert an LDAP/FILETIME integer to a UTC ``datetime`` (whole-second).
+
+    FILETIME has 100-ns resolution, so a naive divide yields sub-second
+    microseconds (e.g. ``…:01.909939``). The ESI mining-extractions endpoint
+    reports the *same* instant rounded to a whole second (``…:02``). Because
+    ``chunk_arrival_time`` is the natural key that dedupes an extraction across
+    its two sources — the ``MoonminingExtractionStarted`` notification (this
+    parser) and ``sync_moon_extractions`` (ESI) — a sub-second mismatch makes
+    ``update_or_create`` miss and insert a *second* row for one real chunk.
+    Round to the nearest second so both sources land on the same key.
+    """
+    seconds = round(int(value) / 10_000_000 - _EPOCH_DIFF)
     return dt.datetime.fromtimestamp(seconds, tz=dt.timezone.utc)
 
 

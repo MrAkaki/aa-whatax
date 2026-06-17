@@ -97,3 +97,50 @@ class SyncStructureLedgerTest(TestCase):
         self.structure.refresh_from_db()
         self.assertEqual(MiningLedgerEntry.objects.count(), 0)
         self.assertIsNone(self.structure.last_ledger_sync)
+
+
+class ApplyExtractionStartedTest(TestCase):
+    """_apply_extraction_started must not resurrect an already-popped chunk.
+
+    Pins the prod bug where a chunk's Started notification, replayed/applied
+    after its Fracture, reset the popped extraction back to ACTIVE — stranding it
+    with a popped_at but status=active (see poll_corp_notifications ordering and
+    the terminal-status guard in _apply_extraction_started).
+    """
+
+    def setUp(self):
+        from whatax.models import MoonExtraction
+
+        self.corp = EveCorporationInfo.objects.create(
+            corporation_id=1, corporation_name="C", corporation_ticker="C", member_count=1
+        )
+        self.structure = MiningStructure.objects.create(
+            structure_id=100, corporation=self.corp, name="S"
+        )
+        self.arrival = dt.datetime(2026, 6, 9, 3, 0, 59, tzinfo=dt.timezone.utc)
+        self.popped = MoonExtraction.objects.create(
+            structure=self.structure,
+            extraction_start_time=self.arrival,
+            chunk_arrival_time=self.arrival,
+            status=MoonExtraction.Status.POPPED,
+            popped_at=dt.datetime(2026, 6, 9, 6, 38, tzinfo=dt.timezone.utc),
+        )
+
+    def _started_note(self):
+        ticks = int((self.arrival.timestamp() + 11644473600) * 10_000_000)
+        note = mock.Mock()
+        note.timestamp = self.arrival
+        note.text = (
+            f"readyTime: {ticks}\n"
+            f"structureID: {self.structure.structure_id}\n"
+            "oreVolumeByType: {}\n"
+        )
+        return note
+
+    def test_started_does_not_revive_popped(self):
+        from whatax.models import MoonExtraction
+
+        tasks._apply_extraction_started(self._started_note())
+        self.popped.refresh_from_db()
+        self.assertEqual(self.popped.status, MoonExtraction.Status.POPPED)
+        self.assertEqual(MoonExtraction.objects.count(), 1)  # matched, not duplicated

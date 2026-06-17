@@ -320,7 +320,14 @@ def poll_corp_notifications():
                     character_id=token.character_id, token=token
                 )
             )
-            for note in notes:
+            # Apply in chronological order. ESI returns a rolling window
+            # newest-first, so when a chunk's Started *and* its Fracture/Laser
+            # land in the same poll (e.g. the first poll after the token is
+            # added), iterating as-returned applies the pop before the start —
+            # and _apply_extraction_started then resets the just-popped row back
+            # to ACTIVE, stranding it with a popped_at but status=active. Sorting
+            # by timestamp guarantees Started precedes its pop for every chunk.
+            for note in sorted(notes, key=lambda n: n.timestamp):
                 ntype = getattr(note, "type", None)
                 if ntype == "MoonminingExtractionStarted":
                     if _claim_notification(note):
@@ -369,15 +376,29 @@ def _apply_extraction_started(note):
     structure = MiningStructure.objects.filter(structure_id=parsed["structure_id"]).first()
     if structure is None or parsed["chunk_arrival_time"] is None:
         return
+    defaults = {
+        "eve_moon": _eve_moon(parsed["moon_id"]),
+        "extraction_start_time": note.timestamp,
+        "natural_decay_time": parsed["natural_decay_time"],
+    }
+    # Belt-and-suspenders against an out-of-order replay (a delayed Started seen
+    # only after its pop was already applied in an earlier poll): never resurrect
+    # a terminal extraction back to ACTIVE. Only (re)assert ACTIVE for a new row
+    # or one still pre-pop; an already popped/dead/cancelled row keeps its status.
+    _TERMINAL = {
+        MoonExtraction.Status.POPPED,
+        MoonExtraction.Status.DEAD,
+        MoonExtraction.Status.CANCELLED,
+    }
+    existing = MoonExtraction.objects.filter(
+        structure=structure, chunk_arrival_time=parsed["chunk_arrival_time"]
+    ).first()
+    if existing is None or existing.status not in _TERMINAL:
+        defaults["status"] = MoonExtraction.Status.ACTIVE
     extraction, _ = MoonExtraction.objects.update_or_create(
         structure=structure,
         chunk_arrival_time=parsed["chunk_arrival_time"],
-        defaults={
-            "eve_moon": _eve_moon(parsed["moon_id"]),
-            "extraction_start_time": note.timestamp,
-            "natural_decay_time": parsed["natural_decay_time"],
-            "status": MoonExtraction.Status.ACTIVE,
-        },
+        defaults=defaults,
     )
     good_ore_ids = moons.good_ore_ids_for(structure)
     total = Decimal("0")
