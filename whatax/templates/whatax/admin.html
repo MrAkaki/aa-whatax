@@ -3,10 +3,6 @@
 {% load humanize %}
 
 {% block whatax_content %}
-<div class="alert alert-warning">
-  {% translate "Dangerous configuration surface. All Whale Tax setup lives here — there is no Django-admin step." %}
-</div>
-
 <div class="card mb-3">
   <div class="card-header">{% translate "Corporation ESI tokens" %}</div>
   <div class="card-body">
@@ -148,9 +144,6 @@
 <div class="card mb-3">
   <div class="card-header">{% translate "Moon groups" %}</div>
   <div class="card-body">
-    <p class="small text-muted mb-2">
-      {% translate "Group moons popped on a shared schedule and set each group's pop interval (days)." %}
-    </p>
     <a href="{% url 'whatax:admin_groups' %}" class="btn btn-primary btn-sm">
       <i class="fas fa-layer-group"></i> {% translate "Manage moon groups" %}
     </a>

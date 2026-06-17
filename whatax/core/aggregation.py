@@ -342,20 +342,32 @@ def player_ore_breakdown(period, user) -> dict:
     Builds the data behind the per-player drill-down on ``period_detail``: a pivot
     with one column per distinct ore the player mined this period and one row per
     of the player's individual characters, the cell being that character's summed
-    quantity of that ore from the raw ledger. Ore refined **unit** price is taken
-    from the player's ``MiningSnapshot`` rows for the period (summing the excluded
-    and non-excluded buckets, so it matches the figures used at calc time), and
-    applied to the column totals to derive the ISK-value row. ISK is rounded to
-    cents with ROUND_HALF_UP like every stored money field.
+    quantity of that ore from the raw ledger. See ``player_ore_breakdown_for_month``
+    for the returned shape; this is the ``TaxPeriod``-keyed wrapper used by staff.
+    """
+    return player_ore_breakdown_for_month(user, period.year, period.month)
+
+
+def player_ore_breakdown_for_month(user, year: int, month: int) -> dict:
+    """Per-(character, ore) mining pivot for one player in a calendar month (§15.1).
+
+    The user-facing form (own dashboard) and shared engine behind
+    ``player_ore_breakdown``: the units pivot is built straight from the raw
+    ledger, so it works for the open, not-yet-calculated month. Each ore column's
+    ISK value is the column's total units × the player's refined **unit** price
+    from that month's ``MiningSnapshot`` rows (excluded + non-excluded buckets
+    summed, matching the figures used at calc time); it is 0 before the month is
+    calculated or for any ore lacking a snapshot. ISK is rounded to cents with
+    ROUND_HALF_UP like every stored money field.
 
     Returns a dict (cell/total lists are column-aligned to ``ores`` so templates
     can iterate without dict-by-key lookups):
-    - ``ores``: ordered list of distinct ore names mined this period;
+    - ``ores``: ordered list of distinct ore names mined this month;
     - ``characters``: ``[{"label", "cells": [qty, ...]}]``, one per character;
     - ``totals_units``: ``[qty, ...]`` summed across the player's characters;
     - ``totals_isk``: ``[Decimal, ...]`` refined ISK value of each ore's total.
     """
-    from whatax.models import MiningLedgerEntry
+    from whatax.models import MiningLedgerEntry, TaxPeriod
 
     character_ids = list(
         CharacterOwnership.objects.filter(user=user).values_list(
@@ -365,39 +377,40 @@ def player_ore_breakdown(period, user) -> dict:
     char_name: dict[int, str] = {cid: name for cid, name in character_ids}
     ids = set(char_name)
 
-    # Per ore_type_id refined unit price from this user's snapshots (both buckets
-    # summed), matching unregistered_character_rows' source-of-truth approach.
-    snap_qty: dict[int, int] = defaultdict(int)
-    snap_value: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
-    ore_name: dict[int, str] = {}
-    for snap in period.snapshots.filter(user=user).select_related("ore_type"):
-        snap_qty[snap.ore_type_id] += snap.quantity
-        snap_value[snap.ore_type_id] += snap.refined_value
-        ore_name[snap.ore_type_id] = snap.ore_type.name
-    unit_price: dict[int, Decimal] = {}
-    for ore_type_id, qty in snap_qty.items():
-        if qty:
-            unit_price[ore_type_id] = snap_value[ore_type_id] / qty
-
     entries = MiningLedgerEntry.objects.filter(
-        recorded_date__year=period.year,
-        recorded_date__month=period.month,
+        recorded_date__year=year,
+        recorded_date__month=month,
         character_id__in=ids,
     ).select_related("ore_type")
 
     # (character_id, ore_type_id) -> summed quantity; track ore names + totals.
     cells: dict[tuple[int, int], int] = defaultdict(int)
     totals_units_by_id: dict[int, int] = defaultdict(int)
+    ore_name: dict[int, str] = {}
     for entry in entries:
         cells[(entry.character_id, entry.ore_type_id)] += entry.quantity
         totals_units_by_id[entry.ore_type_id] += entry.quantity
         ore_name.setdefault(entry.ore_type_id, entry.ore_type.name)
 
-    # Only ores the player actually mined this period become columns.
+    # Per ore_type_id refined unit price from this user's snapshots (both buckets
+    # summed), when the month has a (calculated) period; 0 otherwise.
+    snap_qty: dict[int, int] = defaultdict(int)
+    snap_value: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    period = TaxPeriod.objects.filter(year=year, month=month).first()
+    if period is not None:
+        for snap in period.snapshots.filter(user=user):
+            snap_qty[snap.ore_type_id] += snap.quantity
+            snap_value[snap.ore_type_id] += snap.refined_value
+    unit_price: dict[int, Decimal] = {}
+    for ore_type_id, qty in snap_qty.items():
+        if qty:
+            unit_price[ore_type_id] = snap_value[ore_type_id] / qty
+
+    # Only ores the player actually mined this month become columns.
     ore_type_ids = sorted(totals_units_by_id, key=lambda oid: ore_name[oid].lower())
     ores = [ore_name[oid] for oid in ore_type_ids]
 
-    # Characters that mined this period, ordered by name; keep label resolution
+    # Characters that mined this month, ordered by name; keep label resolution
     # graceful for a character missing from EveCharacter (fall back to its id).
     mined_char_ids = {cid for (cid, _oid) in cells}
     characters = []

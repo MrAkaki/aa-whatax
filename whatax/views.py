@@ -9,7 +9,6 @@ three §14 roles; templates hide tabs the user can't access.
 import datetime as dt
 from decimal import Decimal
 
-from allianceauth.authentication.models import CharacterOwnership
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.db.models import Min, Q, Sum
@@ -31,6 +30,7 @@ WALLET_TOKEN_SCOPES = ["esi-wallet.read_corporation_wallets.v1"]
 from whatax.core import matching, tax
 from whatax.core.aggregation import (
     player_ore_breakdown,
+    player_ore_breakdown_for_month,
     unattributed_user,
     unregistered_character_breakdown,
     unregistered_character_rows,
@@ -64,56 +64,113 @@ from whatax.models import (
 )
 
 
-def _user_character_ids(user):
-    return list(
-        CharacterOwnership.objects.filter(user=user).values_list(
-            "character__character_id", flat=True
-        )
-    )
-
-
 # --- Dashboard (user) -------------------------------------------------------
 
 
 @login_required
 @permission_required("whatax.basic_access")
 def index(request):
-    """Dashboard: frags, own mining (week/month), own tax records (§15.1)."""
+    """Dashboard: moon pops, own 6-month mining graph, own char×ore, tax (§15.1).
+
+    Pops are bucketed per :class:`MoonGroup` (one card each, responsive 2-col grid
+    in the template); a card lists its *recently popped* (not dead) and *upcoming*
+    extractions by structure name and date. The mining graph charts the player's
+    own refined ISK value over the latest six periods, summed from their
+    ``MiningSnapshot`` rows (matches their bills; the open month reads 0 until
+    calc runs). The char×ore table pivots the player's own mining for a selected
+    month, with prev/next month navigation.
+    """
     now = eve_now()
-    char_ids = _user_character_ids(request.user)
 
     upcoming_frags = MoonExtraction.objects.filter(
         chunk_arrival_time__gte=now, chunk_arrival_time__lte=now + dt.timedelta(days=2)
-    ).select_related("eve_moon", "structure", "structure__group").order_by("chunk_arrival_time")
+    ).select_related("structure", "structure__group").order_by("chunk_arrival_time")
     current_frags = MoonExtraction.objects.filter(
         status=MoonExtraction.Status.POPPED, popped_at__gte=now - dt.timedelta(days=2)
-    ).select_related("eve_moon", "structure", "structure__group").order_by("popped_at")
+    ).select_related("structure", "structure__group").order_by("popped_at")
 
-    def mined_since(days):
-        return (
-            MiningLedgerEntry.objects.filter(
-                character_id__in=char_ids,
-                recorded_date__gte=(now - dt.timedelta(days=days)).date(),
-            ).aggregate(total=Sum("quantity"))["total"]
-            or 0
+    # --- My mining: refined ISK value over the latest six periods (snapshots) ---
+    chart_periods = list(TaxPeriod.objects.all()[:6])[::-1]  # newest-first -> chronological
+    mining_bars = []
+    for chart_period in chart_periods:
+        total = (
+            chart_period.snapshots.filter(user=request.user).aggregate(
+                total=Sum("refined_value")
+            )["total"]
+            or Decimal("0")
         )
+        mining_bars.append({"label": str(chart_period), "value": total})
+    max_value = max((b["value"] for b in mining_bars), default=Decimal("0"))
+    for bar in mining_bars:
+        bar["pct"] = float(bar["value"] / max_value * 100) if max_value else 0
+
+    # --- My mining: character×ore for the selected month (default current) ---
+    sel_year, sel_month = _selected_month(request, now)
+    prev_year, prev_month = (sel_year - 1, 12) if sel_month == 1 else (sel_year, sel_month - 1)
+    next_year, next_month = (sel_year + 1, 1) if sel_month == 12 else (sel_year, sel_month + 1)
 
     context = {
         "active_tab": "dashboard",
-        "upcoming_frag_groups": _group_by_moongroup(
-            upcoming_frags, lambda f: f.structure.group
-        ),
-        "current_frag_groups": _group_by_moongroup(
-            current_frags, lambda f: f.structure.group
-        ),
-        "mined_week": mined_since(7),
-        "mined_month": mined_since(30),
+        "frag_groups": _merge_frag_groups(current_frags, upcoming_frags),
+        "mining_bars": mining_bars,
+        "ore_breakdown": player_ore_breakdown_for_month(request.user, sel_year, sel_month),
+        "sel_year": sel_year,
+        "sel_month": sel_month,
+        "prev_year": prev_year,
+        "prev_month": prev_month,
+        "next_year": next_year,
+        "next_month": next_month,
+        # No paging into the future: hide "next" once the selection reaches now.
+        "has_next": (sel_year, sel_month) < (now.year, now.month),
         "records": TaxRecord.objects.visible_to(request.user)
         .filter(user=request.user)
         .select_related("tax_period"),
         "config": TaxConfiguration.objects.get_solo(),
     }
     return render(request, "whatax/dashboard.html", context)
+
+
+def _selected_month(request, now):
+    """Resolve the (year, month) for the dashboard ore table from GET, default now.
+
+    Bad / out-of-range input falls back to the current EVE month rather than 500.
+    """
+    try:
+        year = int(request.GET.get("year", now.year))
+        month = int(request.GET.get("month", now.month))
+    except (TypeError, ValueError):
+        return now.year, now.month
+    if not 1 <= month <= 12:
+        return now.year, now.month
+    return year, month
+
+
+def _merge_frag_groups(current_frags, upcoming_frags):
+    """Bucket current (recently popped) + upcoming extractions per :class:`MoonGroup`.
+
+    Returns ``[{"group": MoonGroup|None, "current": [...], "upcoming": [...]}]``
+    ordered by group name with the ungrouped bucket last, so the template renders
+    one pop card per group (§15.1). Only buckets with any pops appear.
+    """
+    buckets: dict = {}
+    for frag in current_frags:
+        buckets.setdefault(frag.structure.group, {"current": [], "upcoming": []})[
+            "current"
+        ].append(frag)
+    for frag in upcoming_frags:
+        buckets.setdefault(frag.structure.group, {"current": [], "upcoming": []})[
+            "upcoming"
+        ].append(frag)
+    grouped = [
+        {"group": group, **lists}
+        for group, lists in sorted(
+            (kv for kv in buckets.items() if kv[0] is not None),
+            key=lambda kv: kv[0].name,
+        )
+    ]
+    if None in buckets:
+        grouped.append({"group": None, **buckets[None]})
+    return grouped
 
 
 # --- Staff ------------------------------------------------------------------
