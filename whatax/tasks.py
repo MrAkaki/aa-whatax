@@ -128,6 +128,11 @@ def _corps_with_token(scopes):
 
 # --- ESI sync ---------------------------------------------------------------
 
+# eveuniverse group id for Refinery structures (Athanor, Tatara) — the only
+# structures that drill moons. Used to keep moon refineries while dropping
+# citadels / engineering complexes from the corp structures endpoint.
+_REFINERY_GROUP_ID = 1406
+
 
 @shared_task(**_RETRY)
 def sync_structures():
@@ -145,7 +150,7 @@ def sync_structures():
         scope = "esi-corporations.read_structures.v1"
         # Reconciliation needs the live, complete picture: a 304 would make
         # _results() return [] and the prune below would wrongly delete every
-        # structure, so both reads force_refresh (§6.3, _results docstring).
+        # structure, so the read forces a refresh (§6.3, _results docstring).
         seen_ids: set[int] = set()
         processed_corps: list[int] = []
         for corp_id in _corps_with_token(scope):
@@ -154,22 +159,13 @@ def sync_structures():
                 logger.warning("whatax: no structures token for corp %s", corp_id)
                 continue
             corp = EveCorporationInfo.objects.filter(corporation_id=corp_id).first()
-            # The mining-observers list is the authoritative set of moon-drilling
-            # refineries. The corp structures endpoint also returns citadels,
-            # engineering complexes, etc., so we keep only structures that appear
-            # here. The structures token bundle carries the mining scope too, so
-            # the same token reads both (§6.1/§6.2).
-            observers = _results(
-                providers.esi.client.Industry.GetCorporationCorporationIdMiningObservers(
-                    corporation_id=corp_id, token=token
-                ),
-                force_refresh=True,
-            )
-            observer_ids = {
-                o.observer_id
-                for o in observers
-                if getattr(o, "observer_type", None) == "structure"
-            }
+            # Keep every moon-drilling refinery (Athanor/Tatara, group 1406) the
+            # corp owns. The structures endpoint also returns citadels and
+            # engineering complexes, so we gate on structure *type* rather than the
+            # mining-observers list: that endpoint only reports structures mined in
+            # the last ~30 days, so idle drills would vanish and the prune below
+            # would delete them — hiding moons that simply weren't mined recently
+            # (the cause of the under-count). Type is the stable, correct gate.
             processed_corps.append(corp_id)
             rows = _results(
                 providers.esi.client.Corporation.GetCorporationsCorporationIdStructures(
@@ -178,9 +174,9 @@ def sync_structures():
                 force_refresh=True,
             )
             for row in rows:
-                if row.structure_id not in observer_ids:
-                    continue
                 eve_type = _eve_type(getattr(row, "type_id", None))
+                if eve_type is None or eve_type.eve_group_id != _REFINERY_GROUP_ID:
+                    continue
                 system = _eve_system(getattr(row, "system_id", None))
                 # Out-of-scope sec class (e.g. low/null when only HS is taxed):
                 # don't track at all — the prune below drops any that slipped in
@@ -197,7 +193,7 @@ def sync_structures():
                     },
                 )
                 seen_ids.add(row.structure_id)
-        # Drop structures that are no longer mining observers (incl. non-refinery
+        # Drop structures the corp no longer owns as refineries (incl. non-refinery
         # rows left by earlier syncs). Scoped to corps we actually reconciled this
         # run, so a corp whose token is missing keeps its structures untouched.
         MiningStructure.objects.filter(
