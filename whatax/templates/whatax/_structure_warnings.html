@@ -41,46 +41,54 @@ the view_structures read role sees the warnings but cannot act on them.
       </table>
     </div>
     {% endif %}
-    {% if warn_low_fuel %}
-    <div class="alert alert-danger">
-      <strong>{% translate "Fuel runs out before next pop" %}</strong>
-      <p class="small mb-2">{% translate "These drills will run out of fuel before their next pop, so the chunk goes unmined unless they are refuelled first." %}</p>
-      <table class="table table-sm mb-0">
-        <thead><tr>
-          <th>{% translate "Structure" %}</th><th>{% translate "System" %}</th>
-          <th>{% translate "Fuel expires" %}</th><th>{% translate "Next pop" %}</th>
-        </tr></thead>
-        <tbody>
-        {% for w in warn_low_fuel %}
-          <tr>
-            <td>{{ w.structure.name|default:w.structure.structure_id }}</td>
-            <td>{{ w.structure.eve_solar_system.name|default:"—" }}</td>
-            <td class="text-danger">{{ w.fuel_expires|date:"Y-m-d H:i" }}</td>
-            <td>{{ w.next_pop|date:"Y-m-d H:i" }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% endif %}
-    {% if warn_no_setup %}
-    <div class="alert alert-warning mb-0">
-      <strong>{% translate "Structures without a drill setup" %}</strong>
-      <p class="small mb-2">{% translate "These active structures can't be tracked for pops." %}</p>
-      <table class="table table-sm mb-0">
-        <thead><tr>
-          <th>{% translate "Structure" %}</th><th>{% translate "System" %}</th><th>{% translate "Reason" %}</th>
-        </tr></thead>
-        <tbody>
-        {% for w in warn_no_setup %}
-          <tr>
-            <td>{{ w.structure.name|default:w.structure.structure_id }}</td>
-            <td>{{ w.structure.eve_solar_system.name|default:"—" }}</td>
-            <td>{{ w.reason }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
+    {% if warn_low_fuel or warn_no_setup %}
+    <div class="row g-3">
+      {% if warn_low_fuel %}
+      <div class="col-12 col-xl-6">
+        <div class="alert alert-danger h-100 mb-0">
+          <strong>{% translate "Fuel runs out before next pop" %}</strong>
+          <p class="small mb-2">{% translate "These drills will run out of fuel before their next pop, so the chunk goes unmined unless they are refuelled first." %}</p>
+          <table class="table table-sm mb-0">
+            <thead><tr>
+              <th>{% translate "Structure" %}</th><th>{% translate "System" %}</th>
+              <th>{% translate "Fuel expires" %}</th><th>{% translate "Next pop" %}</th>
+            </tr></thead>
+            <tbody>
+            {% for w in warn_low_fuel %}
+              <tr>
+                <td>{{ w.structure.name|default:w.structure.structure_id }}</td>
+                <td>{{ w.structure.eve_solar_system.name|default:"—" }}</td>
+                <td class="text-danger">{{ w.fuel_expires|date:"Y-m-d H:i" }}</td>
+                <td>{{ w.next_pop|date:"Y-m-d H:i" }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+      {% if warn_no_setup %}
+      <div class="col-12 col-xl-6">
+        <div class="alert alert-warning h-100 mb-0">
+          <strong>{% translate "Structures without a drill setup" %}</strong>
+          <p class="small mb-2">{% translate "These active structures can't be tracked for pops." %}</p>
+          <table class="table table-sm mb-0">
+            <thead><tr>
+              <th>{% translate "Structure" %}</th><th>{% translate "System" %}</th><th>{% translate "Reason" %}</th>
+            </tr></thead>
+            <tbody>
+            {% for w in warn_no_setup %}
+              <tr>
+                <td>{{ w.structure.name|default:w.structure.structure_id }}</td>
+                <td>{{ w.structure.eve_solar_system.name|default:"—" }}</td>
+                <td>{{ w.reason }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
     </div>
     {% endif %}
   </div>

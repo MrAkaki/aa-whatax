@@ -4,7 +4,9 @@ Per-group structure pop tables (§15.2/§15.5). Read-only; shared by the Staff
 overview and the read-only Structures tab. Expects ``structure_groups`` from
 whatax.views._group_by_moongroup.
 {% endcomment %}
+<div class="row">
 {% for bucket in structure_groups %}
+<div class="col-12 col-xl-6">
 <div class="card mb-3">
   <div class="card-header">
     {% if bucket.group %}{% translate "Structures" %} — {{ bucket.group.name }}
@@ -39,9 +41,13 @@ whatax.views._group_by_moongroup.
     </table>
   </div>
 </div>
+</div>
 {% empty %}
+<div class="col-12">
 <div class="card mb-3">
   <div class="card-header">{% translate "Structures" %}</div>
   <div class="card-body"><p class="text-muted mb-0">{% translate "No structures." %}</p></div>
 </div>
+</div>
 {% endfor %}
+</div>
