@@ -39,8 +39,9 @@ _VOLUME = dict(max_digits=24, decimal_places=2)
 class General(models.Model):
     """Permissions anchor only — not a real table (TECHNICAL.md §14).
 
-    Three cumulative roles: user ⊂ staff ⊂ admin. None imply the others in
-    code; each view checks the specific permission it needs.
+    Three cumulative roles: user ⊂ staff ⊂ admin, plus a standalone read role
+    ``view_structures`` (drill pop schedule & warnings, no payment data). None
+    imply the others in code; each view checks the specific permission it needs.
     """
 
     class Meta:
@@ -48,6 +49,7 @@ class General(models.Model):
         default_permissions = ()
         permissions = (
             ("basic_access", "USER: own dashboard — frags, own mining, own tax record"),
+            ("view_structures", "STRUCTURES: read-only drill pop schedule & warnings (no payments)"),
             ("manage_payments", "STAFF: fix payments, add/remove balances, view all records"),
             ("admin_access", "ADMIN: configuration & dangerous actions (keys, rates, exclusions, calc)"),
         )
@@ -206,16 +208,28 @@ class MiningStructure(models.Model):
     def __str__(self):
         return self.name or str(self.structure_id)
 
-    def recompute_planned_pop(self, *, save: bool = True):
+    def recompute_planned_pop(self, *, accept: bool = False, save: bool = True):
         """Refresh ``planned_pop_at`` from the live next pop + group cadence (§5.1).
 
-        The planned pop is the soonest still-future ``chunk_arrival_time`` (the
+        ``planned_pop_at`` is the soonest still-future ``chunk_arrival_time`` (the
         live "next pop") shifted forward by the group's ``schedule_interval_days``
-        — i.e. the projected pop *after* the next one. It is ``None`` when the
-        structure is ungrouped or has nothing scheduled. Call this wherever the
+        — the projected pop *after* the next one, and therefore the day the *next*
+        reset is expected to arrive on. To make a drill being reset off-schedule
+        detectable, the projection is **sticky**: it only re-projects from the
+        live next pop when
+
+        - there is no projection yet (first extraction), or
+        - the live next pop lands on the projected day (an on-schedule reset), or
+        - ``accept`` is set (staff dismissing the deviation, taking the new dates).
+
+        When a reset lands on a *different* day the standing projection is kept, so
+        ``next_pop + interval`` no longer matches it and the deviation stays visible
+        (see :func:`whatax.views._structure_pop_warnings`) until staff dismiss it or
+        fix the drill in game (a later sync then lands on-schedule and re-projects).
+        It is ``None`` only when the structure is ungrouped. Call this wherever the
         inputs change: extraction sync, pop application, or group (re)assignment.
         """
-        planned = None
+        next_pop = None
         if self.group_id is not None:
             next_pop = (
                 self.extractions.filter(chunk_arrival_time__gte=eve_now())
@@ -228,8 +242,22 @@ class MiningStructure(models.Model):
                 )
                 .aggregate(models.Min("chunk_arrival_time"))["chunk_arrival_time__min"]
             )
-            if next_pop is not None:
-                planned = next_pop + dt.timedelta(days=self.group.schedule_interval_days)
+        if self.group_id is None:
+            planned = None
+        elif next_pop is None:
+            # Pop fired but the next cycle isn't scheduled yet: keep the standing
+            # projection so we can compare it once the new extraction lands.
+            planned = self.planned_pop_at
+        elif (
+            accept
+            or self.planned_pop_at is None
+            or self.planned_pop_at.date() == next_pop.date()
+        ):
+            planned = next_pop + dt.timedelta(days=self.group.schedule_interval_days)
+        else:
+            # Reset to a day other than planned: keep the projection so the
+            # deviation stays visible until dismissed or fixed in game.
+            planned = self.planned_pop_at
         self.planned_pop_at = planned
         if save:
             self.save(update_fields=["planned_pop_at"])

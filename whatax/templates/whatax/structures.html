@@ -1,0 +1,11 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+
+{# Read-only drill pop schedule & warnings for the view_structures role (§15.5).
+   Same warning panel and per-group pop tables as the Staff overview, with no
+   payment/tax data and no dismiss action (that self-gates on manage_payments). #}
+{% block whatax_content %}
+{% include "whatax/_structure_warnings.html" %}
+
+{% include "whatax/_structure_tables.html" %}
+{% endblock %}

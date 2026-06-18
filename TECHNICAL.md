@@ -833,8 +833,8 @@ overlapping runs of the same sync.
 
 ## 14. Permissions
 
-Three **cumulative roles** — user ⊂ staff ⊂ admin — defined on an unmanaged
-`General` model (the AA idiom):
+Three **cumulative roles** — user ⊂ staff ⊂ admin — plus a standalone read role
+`view_structures`, defined on an unmanaged `General` model (the AA idiom):
 
 ```python
 class General(models.Model):
@@ -843,6 +843,7 @@ class General(models.Model):
         default_permissions = ()
         permissions = (
             ("basic_access",     "USER: own dashboard — frags, own mining, own tax record"),
+            ("view_structures",  "STRUCTURES: read-only drill pop schedule & warnings (no payments)"),
             ("manage_payments",  "STAFF: fix payments, add/remove balances, view all records"),
             ("admin_access",     "ADMIN: configuration & dangerous actions (keys, rates, exclusions, calc)"),
         )
@@ -851,12 +852,16 @@ class General(models.Model):
 | Role | Permission(s) | Can do |
 |---|---|---|
 | **User** | `basic_access` | See current frags + upcoming frags (next 2 days); own mining last week / last month; own tax record — charges, balances, payments. Read-only, self-only. |
-| **Staff** | `basic_access` + `manage_payments` | All of user, plus: view **all** players' records, fix tax payments, manually match/unmatch, **add or remove balances** (manual adjustments with audit note). Room to add more staff actions later. |
+| **Structures** | `view_structures` | Standalone read role (e.g. a fuel/drill reset group): the **Structures** tab only — the drill pop schedule (next pop / planned pop per group) and the off-schedule / no-setup **warning panel**. No payment, record or player data; read-only (no dismiss — resetting the drill in game clears the warning on next sync). Does **not** require `basic_access`. |
+| **Staff** | `basic_access` + `manage_payments` | All of user, plus: view **all** players' records, fix tax payments, manually match/unmatch, **add or remove balances** (manual adjustments with audit note). Sees the same structure pops/warnings inline on the Staff overview (with the Dismiss action). Room to add more staff actions later. |
 | **Admin** | + `admin_access` | All of staff, plus the **dangerous** surface: API keys, tax rates & per-corp overrides, payment corp/wallet, webhook, moon exclusions, good-ore, structure toggles, **run/re-run calc**, waive records, master enable switch. |
 
 Roles are granted cumulatively via AA groups (a staff member's group carries both
 `basic_access` and `manage_payments`); none of the higher permissions *imply* the
-lower in code, so views check the specific permission they need.
+lower in code, so views check the specific permission they need. `view_structures`
+is **orthogonal**, not part of the user ⊂ staff ⊂ admin chain — staff already see
+the structures surface inline, so the dedicated **Structures** tab only renders for
+holders who lack `manage_payments`.
 
 - **Self vs. all:** querysets are filtered to `request.user` unless the caller
   has `manage_payments` or `admin_access`. Object-level scoping lives in
@@ -871,12 +876,14 @@ lower in code, so views check the specific permission they need.
 ## 15. Views & UI
 
 Registered through AA hooks in `auth_hooks.py` (`MenuItemHook` gated on
-`basic_access`, `UrlHook` at `^whatax/`). Icon e.g. `fas fa-coins`.
+`basic_access` or `view_structures`, `UrlHook` at `^whatax/`). Icon e.g.
+`fas fa-coins`.
 
-**The UI is a tabbed single app**, gated by the three roles in
-[§14](#14-permissions): a **user** sees only **Dashboard**; **staff** also sees
-**Staff**; **admin** also sees **Admin**. The Admin tab is the only place config
-lives — nothing routes the operator to the Django admin.
+**The UI is a tabbed single app**, gated by the roles in
+[§14](#14-permissions): a **user** sees only **Dashboard**; the **structures**
+read role sees only **Structures**; **staff** also sees **Staff**; **admin** also
+sees **Admin**. The Admin tab is the only place config lives — nothing routes the
+operator to the Django admin.
 
 ### 15.1 Dashboard tab — `basic_access` (user)
 
@@ -936,6 +943,7 @@ of one tab, all writing the config models in [§5.1](#51-configuration):
 | View | Path | Perm | Tab |
 |---|---|---|---|
 | Dashboard | `whatax:index` | `basic_access` | Dashboard |
+| Structures | `whatax:structures` | `view_structures` | Structures |
 | Staff | `whatax:staff` | `manage_payments` | Staff |
 | Period detail | `whatax:period/<id>` | `manage_payments` | Staff |
 | Manual match | `whatax:payment/<id>/match` | `manage_payments` | Staff |
@@ -947,6 +955,19 @@ of one tab, all writing the config models in [§5.1](#51-configuration):
 Templates extend AA's base (`allianceauth/base.html` family); the tab strip is a
 shared partial that hides tabs the user can't access. Heavy tables use DataTables
 (bundled with AA) with server-side pagination for large periods.
+
+### 15.5 Structures tab — `view_structures` (read-only)
+
+The drill pop schedule for the standalone read role ([§14](#14-permissions)) — a
+fuel/drill reset group that needs to watch pops but must not see money. It renders
+the **same** warning panel and per-group pop tables as the Staff overview, via the
+shared `_structure_warnings.html` / `_structure_tables.html` partials, with nothing
+about players, records or payments. It is read-only: the Dismiss action self-gates
+on `manage_payments`, so this role sees an off-schedule warning but clears it by
+resetting the drill in game (the next sync re-projects on-schedule, [§5.1](#51-configuration)).
+The tab only renders for holders who lack `manage_payments` (staff get the same
+data inline on Staff). Because this role has no `basic_access`, the sidebar menu
+item points at `whatax:structures` instead of the dashboard for them.
 
 ---
 

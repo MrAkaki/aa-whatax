@@ -14,6 +14,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.db.models import Min, Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 from esi.decorators import token_required
 
@@ -237,15 +238,17 @@ def staff(request):
     max_value = max((b["value"] for b in bars), default=Decimal("0"))
     for bar in bars:
         bar["pct"] = float(bar["value"] / max_value * 100) if max_value else 0
+    structures = list(_structures_next_pop())
+    warn_no_setup, warn_off_schedule = _structure_pop_warnings(structures)
     context = {
         "active_tab": "staff",
         "active_subtab": "overview",
         "bars": bars,
         "periods": TaxPeriod.objects.all(),
         "mining_months": _mining_months(),
-        "structure_groups": _group_by_moongroup(
-            _structures_next_pop(), lambda s: s.group
-        ),
+        "structure_groups": _group_by_moongroup(structures, lambda s: s.group),
+        "warn_no_setup": warn_no_setup,
+        "warn_off_schedule": warn_off_schedule,
         "period": period,
         "records": _attach_character_search(records),
         "unmatched_payments": Payment.objects.filter(
@@ -445,6 +448,83 @@ def _structures_next_pop():
         )
         .order_by("name", "structure_id")
     )
+
+
+def _structure_pop_warnings(structures):
+    """Split the annotated structures into the two staff warning lists (§15.2).
+
+    ``structures`` is a :func:`_structures_next_pop` queryset (``next_pop``
+    annotated, ``group`` selected). Inactive structures are skipped — they are
+    excluded from tax, so an idle drill there is expected. Returns
+    ``(no_setup, off_schedule)`` where
+
+    - **no_setup**: ``{"structure", "reason"}`` for drills that can't be
+      scheduled/tracked — no :class:`MoonGroup` (no cadence) or no upcoming pop.
+    - **off_schedule**: ``{"structure", "planned", "actual"}`` for drills whose
+      next pop fell on a different day than the standing projection, i.e. the
+      drill was reset off the planned schedule (``planned_pop_at`` is sticky, so
+      ``next_pop + interval`` only matches it while on schedule — see
+      :meth:`MiningStructure.recompute_planned_pop`).
+    """
+    no_setup, off_schedule = [], []
+    for s in structures:
+        if not s.is_active:
+            continue
+        if s.group is None:
+            no_setup.append({"structure": s, "reason": _("not assigned to a group")})
+            continue
+        if s.next_pop is None:
+            no_setup.append({"structure": s, "reason": _("no upcoming pop scheduled")})
+            continue
+        if s.planned_pop_at is not None:
+            expected = s.next_pop + dt.timedelta(days=s.group.schedule_interval_days)
+            if expected.date() != s.planned_pop_at.date():
+                off_schedule.append(
+                    {"structure": s, "planned": s.planned_pop_at, "actual": s.next_pop}
+                )
+    return no_setup, off_schedule
+
+
+@login_required
+@permission_required("whatax.manage_payments")
+@require_POST
+def structure_pop_dismiss(request, structure_id):
+    """Accept a drill's off-schedule reset: re-project from the new dates (§15.2).
+
+    Clears the off-schedule warning by taking the live next pop as the schedule
+    going forward. Alternatively staff fix the drill in game and a later sync
+    re-projects on its own.
+    """
+    structure = get_object_or_404(MiningStructure, pk=structure_id)
+    structure.recompute_planned_pop(accept=True)
+    messages.success(
+        request,
+        _("Accepted new pop schedule for %(name)s.") % {"name": str(structure)},
+    )
+    return redirect("whatax:staff")
+
+
+@login_required
+@permission_required("whatax.view_structures")
+def structures(request):
+    """Read-only drill pop schedule & warnings — no payment data (§15.5).
+
+    The dedicated page for the ``view_structures`` read role (e.g. a fuel/drill
+    reset group): the same structure warning panel and per-group pop tables the
+    Staff overview shows, but nothing about players, records or payments. It is
+    read-only — there is no dismiss action here; an off-schedule warning clears
+    when the drill is reset on-schedule in game and the next sync re-projects
+    (dismissing the deviation outright stays a ``manage_payments`` action).
+    """
+    structure_list = list(_structures_next_pop())
+    warn_no_setup, warn_off_schedule = _structure_pop_warnings(structure_list)
+    context = {
+        "active_tab": "structures",
+        "structure_groups": _group_by_moongroup(structure_list, lambda s: s.group),
+        "warn_no_setup": warn_no_setup,
+        "warn_off_schedule": warn_off_schedule,
+    }
+    return render(request, "whatax/structures.html", context)
 
 
 @login_required

@@ -9,6 +9,8 @@ app_name = "whatax"
 urlpatterns = [
     # Dashboard (user)
     path("", views.index, name="index"),
+    # Structures (read-only drill pop schedule & warnings)
+    path("structures/", views.structures, name="structures"),
     # Staff
     path("staff/", views.staff, name="staff"),
     path("staff/outstanding/", views.staff_outstanding, name="staff_outstanding"),
@@ -17,6 +19,11 @@ urlpatterns = [
         "staff/mining/<int:year>/<int:month>/",
         views.staff_mining_month,
         name="staff_mining_month",
+    ),
+    path(
+        "staff/structure/<int:structure_id>/dismiss-pop/",
+        views.structure_pop_dismiss,
+        name="structure_pop_dismiss",
     ),
     path("period/<int:period_id>/", views.period_detail, name="period"),
     path(

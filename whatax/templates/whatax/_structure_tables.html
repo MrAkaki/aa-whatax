@@ -1,0 +1,37 @@
+{% load i18n %}
+{# Per-group structure pop tables (§15.2/§15.5). Read-only; shared by the Staff
+   overview and the read-only Structures tab. Expects ``structure_groups`` from
+   whatax.views._group_by_moongroup. #}
+{% for bucket in structure_groups %}
+<div class="card mb-3">
+  <div class="card-header">
+    {% if bucket.group %}{% translate "Structures" %} — {{ bucket.group.name }}
+      <span class="badge bg-secondary">{% blocktranslate count days=bucket.group.schedule_interval_days %}{{ days }} day{% plural %}{{ days }} days{% endblocktranslate %}</span>
+    {% else %}{% translate "Structures" %} — {% translate "Ungrouped" %}{% endif %}
+  </div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm table-striped whatax-paginate">
+      <thead><tr>
+        <th>{% translate "Structure" %}</th><th>{% translate "System" %}</th>
+        <th>{% translate "Next pop" %}</th><th>{% translate "Planned pop" %}</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for s in bucket.items %}
+        <tr>
+          <td>{{ s.name|default:s.structure_id }}</td>
+          <td>{{ s.eve_solar_system.name|default:"—" }}</td>
+          <td>{% if s.next_pop %}{{ s.next_pop|date:"Y-m-d H:i" }}{% else %}<span class="text-muted">{% translate "none scheduled" %}</span>{% endif %}</td>
+          <td>{% if s.planned_pop_at %}{{ s.planned_pop_at|date:"Y-m-d H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+          <td>{% if not s.is_active %}<span class="badge bg-secondary">{% translate "inactive" %}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% empty %}
+<div class="card mb-3">
+  <div class="card-header">{% translate "Structures" %}</div>
+  <div class="card-body"><p class="text-muted mb-0">{% translate "No structures." %}</p></div>
+</div>
+{% endfor %}

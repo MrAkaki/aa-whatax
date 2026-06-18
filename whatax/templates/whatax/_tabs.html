@@ -8,6 +8,13 @@
       </a>
     </li>
   {% endif %}
+  {% if perms.whatax.view_structures and not perms.whatax.manage_payments %}
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'structures' %}active{% endif %}" href="{% url 'whatax:structures' %}">
+        {% translate "Structures" %}
+      </a>
+    </li>
+  {% endif %}
   {% if perms.whatax.manage_payments %}
     <li class="nav-item">
       <a class="nav-link {% if active_tab == 'staff' %}active{% endif %}" href="{% url 'whatax:staff' %}">
