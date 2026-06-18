@@ -18,7 +18,7 @@
       </tr></thead>
       <tbody>
       {% for r in records %}
-        <tr>
+        <tr data-search="{{ r.character_search }}">
           <td>{{ r.id }}</td>
           <td><a href="{% url 'whatax:period_player' period.id r.user_id %}">{{ r.user }}</a></td>
           <td>{% if r.flat_discount_applied %}−{{ r.flat_discount_applied|intcomma }}{% else %}—{% endif %}</td>

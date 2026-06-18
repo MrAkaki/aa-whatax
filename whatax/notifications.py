@@ -5,8 +5,10 @@ Webhook (dhooks-lite) + opt-in Discord DM. Every send is idempotent via the
 re-pings. End-of-month "tax due" fan-out is sent as one Celery task per player
 with rate-limit-aware retry so a single Discord 429 can't stall the batch.
 
-Events: tax due (period finalized), payment received (reconcile match),
-moon pop (fracture notification), moon dead (>=95% good ore).
+The broadcast webhook is reserved for exactly three events: **moon pop**
+(structure name + ore amounts), **moon dead** (structure name + a "leftovers
+optional" note), and **tax invoice** (a link to the dashboard to review it).
+Payment-received is DM-only — it never touches the broadcast webhook.
 """
 
 import logging
@@ -67,27 +69,71 @@ def _embed(title, description, *, color=0x1F8B4C, fields=None):
     return embed
 
 
+def _dashboard_url() -> str:
+    """Absolute URL to the user dashboard, falling back to the relative path."""
+    from django.conf import settings
+    from django.urls import reverse
+
+    rel = reverse("whatax:index")
+    base = (getattr(settings, "SITE_URL", "") or "").rstrip("/")
+    return f"{base}{rel}" if base else rel
+
+
+def _ore_amounts(extraction) -> str:
+    """Markdown bullet list of the chunk's ore composition (largest first).
+
+    The composition is snapshotted only from the ``MoonminingExtractionStarted``
+    notification (``ExtractionOre``); the pop event itself carries none. When that
+    notification was missed for this chunk (e.g. the cycle was already running when
+    the structure was first tracked), fall back to this structure's last known
+    chunk composition — a moon's ore types are fixed, so the previous chunk is a
+    close proxy — and flag it as approximate.
+    """
+    ores = list(extraction.ores.select_related("ore_type").order_by("-volume_m3"))
+    if ores:
+        return "\n".join(f"• {o.ore_type}: {o.volume_m3:,.0f} m³" for o in ores)
+
+    from whatax.models import ExtractionOre, MoonExtraction
+
+    prior = (
+        MoonExtraction.objects.filter(structure=extraction.structure, ores__isnull=False)
+        .exclude(pk=extraction.pk)
+        .order_by("-chunk_arrival_time")
+        .first()
+    )
+    if prior is None:
+        return "_composition unknown_"
+    fallback = ExtractionOre.objects.filter(extraction=prior).select_related(
+        "ore_type"
+    ).order_by("-volume_m3")
+    lines = "\n".join(f"• {o.ore_type}: {o.volume_m3:,.0f} m³" for o in fallback)
+    return f"_approximate — from the previous chunk:_\n{lines}"
+
+
 # --- Events -----------------------------------------------------------------
 
 
 def notify_tax_due(record) -> bool:
-    """Webhook + opt-in DM that a bill was emitted (idempotent on notified_due_at)."""
+    """Webhook + opt-in DM that an invoice was emitted (idempotent on notified_due_at)."""
     if record.notified_due_at is not None:
         return False
     config = _config()
     pay_to = config.payment_corporation
+    url = _dashboard_url()
+    due = f"{record.due_date:%Y-%m-%d}" if record.due_date else "—"
     msg = (
-        f"Tax due for **{record.user}** — {record.tax_period}: "
-        f"{record.tax_due:,.2f} ISK (due {record.due_date:%Y-%m-%d})."
+        f"Tax invoice for **{record.user}** — {record.tax_period}: "
+        f"{record.tax_due:,.2f} ISK (due {due}).\n\n"
+        f"Review your invoice on the [dashboard]({url})."
     )
     embed = _embed(
-        "Whale Tax — Tax Due",
+        "Whale Tax — Tax Invoice",
         msg,
         color=0xE67E22,
         fields=[
             ("Period", record.tax_period),
             ("Amount", f"{record.tax_due:,.2f} ISK"),
-            ("Due", f"{record.due_date:%Y-%m-%d}" if record.due_date else "—"),
+            ("Due", due),
             ("Pay to", pay_to or "(unconfigured)"),
         ],
     )
@@ -99,11 +145,14 @@ def notify_tax_due(record) -> bool:
 
 
 def notify_payment_received(payment) -> bool:
-    """Webhook + opt-in DM that a payment was matched (idempotent on notified_at)."""
+    """Opt-in DM that a payment was matched (idempotent on notified_at).
+
+    DM-only by design: the broadcast webhook is reserved for moon-pop,
+    moon-dead and tax-invoice events.
+    """
     if payment.notified_at is not None or payment.user is None:
         return False
     msg = f"Payment received from **{payment.user}**: {payment.amount:,.2f} ISK."
-    _send_webhook(embed=_embed("Whale Tax — Payment Received", msg))
     _send_dm(payment.user, msg)
     payment.notified_at = eve_now()
     payment.save(update_fields=["notified_at"])
@@ -111,24 +160,35 @@ def notify_payment_received(payment) -> bool:
 
 
 def notify_moon_pop(extraction) -> bool:
-    """Webhook that a moon chunk was fractured (idempotent on notified_pop_at)."""
+    """Webhook that a moon chunk was fractured (idempotent on notified_pop_at).
+
+    Carries the structure name and the chunk's ore amounts.
+    """
     if extraction.notified_pop_at is not None:
         return False
-    msg = f"Moon **popped**: {extraction.eve_moon or extraction.structure} fractured."
-    _send_webhook(embed=_embed("Whale Tax — Moon Pop", msg, color=0x9B59B6))
+    description = (
+        f"**{extraction.structure}** fractured — chunk ready to mine.\n\n"
+        f"**Ore amounts:**\n{_ore_amounts(extraction)}"
+    )
+    _send_webhook(embed=_embed("Whale Tax — Moon Pop", description, color=0x9B59B6))
     extraction.notified_pop_at = eve_now()
     extraction.save(update_fields=["notified_pop_at"])
     return True
 
 
 def notify_moon_dead(extraction) -> bool:
-    """Webhook that a moon hit the dead threshold (idempotent on notified_dead_at)."""
+    """Webhook that a moon hit the dead threshold (idempotent on notified_dead_at).
+
+    Carries the structure name and a note that the leftovers are optional.
+    """
     if extraction.notified_dead_at is not None:
         return False
-    frac = extraction.dead_fraction
-    pct = f"{frac * 100:.0f}%" if frac is not None else "—"
-    msg = f"Moon **dead** ({pct} good ore mined): {extraction.eve_moon or extraction.structure}."
-    _send_webhook(embed=_embed("Whale Tax — Moon Dead", msg, color=0xC0392B))
+    description = (
+        f"**{extraction.structure}** has hit the dead threshold — the good ore is "
+        "mined out.\n\nThere may be some left-overs, but you don't need to mine "
+        "them unless you're already on grid."
+    )
+    _send_webhook(embed=_embed("Whale Tax — Moon Dead", description, color=0xC0392B))
     extraction.notified_dead_at = eve_now()
     extraction.save(update_fields=["notified_dead_at"])
     return True

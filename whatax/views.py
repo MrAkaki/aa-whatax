@@ -176,6 +176,30 @@ def _merge_frag_groups(current_frags, upcoming_frags):
 # --- Staff ------------------------------------------------------------------
 
 
+def _attach_character_search(records):
+    """Tag each record with its player's other character names for table search.
+
+    The staff/period record tables show one row per player (the main character's
+    name). To let a search box surface a player when one of their *alts* matches
+    the typed text, we stash that player's full character-name list on the row
+    via ``record.character_search`` (rendered into ``data-search``; search.js
+    folds it into the match text). Returns the records as a list so the template
+    iterates the same objects we annotated.
+    """
+    from allianceauth.authentication.models import CharacterOwnership
+
+    records = list(records)
+    names: dict[int, list[str]] = {}
+    for user_id, name in CharacterOwnership.objects.filter(
+        user_id__in={r.user_id for r in records}
+    ).values_list("user_id", "character__character_name"):
+        if name:
+            names.setdefault(user_id, []).append(name)
+    for record in records:
+        record.character_search = " ".join(names.get(record.user_id, []))
+    return records
+
+
 @login_required
 @permission_required("whatax.manage_payments")
 def staff(request):
@@ -223,7 +247,7 @@ def staff(request):
             _structures_next_pop(), lambda s: s.group
         ),
         "period": period,
-        "records": records,
+        "records": _attach_character_search(records),
         "unmatched_payments": Payment.objects.filter(
             match_method=Payment.MatchMethod.UNMATCHED
         ).select_related("user"),
@@ -462,7 +486,9 @@ def period_detail(request, period_id):
         "active_tab": "staff",
         "active_subtab": "overview",
         "period": period,
-        "records": period.tax_records.select_related("user").exclude(user=sentinel),
+        "records": _attach_character_search(
+            period.tax_records.select_related("user").exclude(user=sentinel)
+        ),
         "unregistered": unregistered_character_rows(period),
         "adjust_form": BalanceAdjustmentForm(),
         "edit_form": TaxEditForm(),

@@ -24,3 +24,8 @@
   content: "\25BC"; /* ▼ */
   opacity: 1;
 }
+
+/* Per-table search box (see js/search.js). */
+.whatax-search {
+  max-width: 20rem;
+}
