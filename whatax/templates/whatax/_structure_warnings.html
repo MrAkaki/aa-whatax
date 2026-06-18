@@ -26,7 +26,7 @@ the view_structures read role sees the warnings but cannot act on them.
             <td>{{ w.structure.name|default:w.structure.structure_id }}</td>
             <td>{{ w.structure.group.name }}</td>
             <td>{{ w.planned|date:"Y-m-d H:i" }}</td>
-            <td class="text-danger">{{ w.actual|date:"Y-m-d H:i" }}</td>
+            <td class="fw-bold">{{ w.actual|date:"Y-m-d H:i" }}</td>
             {% if perms.whatax.manage_payments %}
             <td>
               <form method="post" action="{% url 'whatax:structure_pop_dismiss' w.structure.id %}">
@@ -58,7 +58,7 @@ the view_structures read role sees the warnings but cannot act on them.
               <tr>
                 <td>{{ w.structure.name|default:w.structure.structure_id }}</td>
                 <td>{{ w.structure.eve_solar_system.name|default:"—" }}</td>
-                <td class="text-danger">{{ w.fuel_expires|date:"Y-m-d H:i" }}</td>
+                <td class="fw-bold">{{ w.fuel_expires|date:"Y-m-d H:i" }}</td>
                 <td>{{ w.next_pop|date:"Y-m-d H:i" }}</td>
               </tr>
             {% endfor %}
