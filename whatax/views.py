@@ -239,7 +239,7 @@ def staff(request):
     for bar in bars:
         bar["pct"] = float(bar["value"] / max_value * 100) if max_value else 0
     structures = list(_structures_next_pop())
-    warn_no_setup, warn_off_schedule = _structure_pop_warnings(structures)
+    warn_no_setup, warn_off_schedule, warn_low_fuel = _structure_pop_warnings(structures)
     context = {
         "active_tab": "staff",
         "active_subtab": "overview",
@@ -249,6 +249,7 @@ def staff(request):
         "structure_groups": _group_by_moongroup(structures, lambda s: s.group),
         "warn_no_setup": warn_no_setup,
         "warn_off_schedule": warn_off_schedule,
+        "warn_low_fuel": warn_low_fuel,
         "period": period,
         "records": _attach_character_search(records),
         "unmatched_payments": Payment.objects.filter(
@@ -451,12 +452,12 @@ def _structures_next_pop():
 
 
 def _structure_pop_warnings(structures):
-    """Split the annotated structures into the two staff warning lists (§15.2).
+    """Split the annotated structures into the staff warning lists (§15.2).
 
     ``structures`` is a :func:`_structures_next_pop` queryset (``next_pop``
     annotated, ``group`` selected). Inactive structures are skipped — they are
     excluded from tax, so an idle drill there is expected. Returns
-    ``(no_setup, off_schedule)`` where
+    ``(no_setup, off_schedule, low_fuel)`` where
 
     - **no_setup**: ``{"structure", "reason"}`` for drills that can't be
       scheduled/tracked — no :class:`MoonGroup` (no cadence) or no upcoming pop.
@@ -465,11 +466,22 @@ def _structure_pop_warnings(structures):
       drill was reset off the planned schedule (``planned_pop_at`` is sticky, so
       ``next_pop + interval`` only matches it while on schedule — see
       :meth:`MiningStructure.recompute_planned_pop`).
+    - **low_fuel**: ``{"structure", "fuel_expires", "next_pop"}`` for drills whose
+      fuel runs out before their next pop, so the chunk goes unmined unless they
+      are refuelled first.
     """
-    no_setup, off_schedule = [], []
+    no_setup, off_schedule, low_fuel = [], [], []
     for s in structures:
         if not s.is_active:
             continue
+        if (
+            s.next_pop is not None
+            and s.fuel_expires is not None
+            and s.fuel_expires < s.next_pop
+        ):
+            low_fuel.append(
+                {"structure": s, "fuel_expires": s.fuel_expires, "next_pop": s.next_pop}
+            )
         if s.group is None:
             no_setup.append({"structure": s, "reason": _("not assigned to a group")})
             continue
@@ -482,7 +494,7 @@ def _structure_pop_warnings(structures):
                 off_schedule.append(
                     {"structure": s, "planned": s.planned_pop_at, "actual": s.next_pop}
                 )
-    return no_setup, off_schedule
+    return no_setup, off_schedule, low_fuel
 
 
 @login_required
@@ -517,12 +529,13 @@ def structures(request):
     (dismissing the deviation outright stays a ``manage_payments`` action).
     """
     structure_list = list(_structures_next_pop())
-    warn_no_setup, warn_off_schedule = _structure_pop_warnings(structure_list)
+    warn_no_setup, warn_off_schedule, warn_low_fuel = _structure_pop_warnings(structure_list)
     context = {
         "active_tab": "structures",
         "structure_groups": _group_by_moongroup(structure_list, lambda s: s.group),
         "warn_no_setup": warn_no_setup,
         "warn_off_schedule": warn_off_schedule,
+        "warn_low_fuel": warn_low_fuel,
     }
     return render(request, "whatax/structures.html", context)
 

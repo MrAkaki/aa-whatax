@@ -423,6 +423,9 @@ class StructuresReadViewTest(TestCase):
         self.assertContains(resp, "Drift Refinery")
         self.assertContains(resp, "Lonely Refinery")
         self.assertContains(resp, "not assigned to a group")
+        # Template doc comments must be {% comment %} blocks, not multi-line {# #}
+        # (which Django renders verbatim) — guard against that leaking on-page.
+        self.assertNotContains(resp, "self-gates")
 
     def test_read_role_sees_no_dismiss_action_or_payment_data(self):
         self._off_schedule_drill()

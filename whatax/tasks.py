@@ -190,6 +190,7 @@ def sync_structures():
                         "name": getattr(row, "name", "") or "",
                         "eve_type": eve_type,
                         "eve_solar_system": system,
+                        "fuel_expires": getattr(row, "fuel_expires", None),
                     },
                 )
                 seen_ids.add(row.structure_id)

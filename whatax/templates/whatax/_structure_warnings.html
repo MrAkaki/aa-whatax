@@ -1,8 +1,10 @@
 {% load i18n %}
-{# Structure warning panel (§15.2/§15.5). Shared by the Staff overview and the
-   read-only Structures tab. The Dismiss action self-gates on manage_payments,
-   so the view_structures read role sees the warnings but cannot act on them. #}
-{% if warn_no_setup or warn_off_schedule %}
+{% comment %}
+Structure warning panel (§15.2/§15.5). Shared by the Staff overview and the
+read-only Structures tab. The Dismiss action self-gates on manage_payments, so
+the view_structures read role sees the warnings but cannot act on them.
+{% endcomment %}
+{% if warn_no_setup or warn_off_schedule or warn_low_fuel %}
 <div class="card border-warning mb-3">
   <div class="card-header bg-warning text-dark">
     {% translate "Structure warnings" %}
@@ -33,6 +35,28 @@
               </form>
             </td>
             {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% if warn_low_fuel %}
+    <div class="alert alert-danger">
+      <strong>{% translate "Fuel runs out before next pop" %}</strong>
+      <p class="small mb-2">{% translate "These drills will run out of fuel before their next pop, so the chunk goes unmined unless they are refuelled first." %}</p>
+      <table class="table table-sm mb-0">
+        <thead><tr>
+          <th>{% translate "Structure" %}</th><th>{% translate "System" %}</th>
+          <th>{% translate "Fuel expires" %}</th><th>{% translate "Next pop" %}</th>
+        </tr></thead>
+        <tbody>
+        {% for w in warn_low_fuel %}
+          <tr>
+            <td>{{ w.structure.name|default:w.structure.structure_id }}</td>
+            <td>{{ w.structure.eve_solar_system.name|default:"—" }}</td>
+            <td class="text-danger">{{ w.fuel_expires|date:"Y-m-d H:i" }}</td>
+            <td>{{ w.next_pop|date:"Y-m-d H:i" }}</td>
           </tr>
         {% endfor %}
         </tbody>

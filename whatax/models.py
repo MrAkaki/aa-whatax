@@ -202,11 +202,24 @@ class MiningStructure(models.Model):
         blank=True,
         help_text=_("Projected next-cycle pop: next pop + the group's schedule_interval_days."),
     )
+    fuel_expires = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=_("ESI-reported moment fuel runs out; None when unknown."),
+    )
 
     objects = MiningStructureManager()
 
     def __str__(self):
         return self.name or str(self.structure_id)
+
+    @property
+    def fuel_days_left(self):
+        """Whole days until fuel runs out, or None when unknown/expired-past."""
+        if self.fuel_expires is None:
+            return None
+        delta = self.fuel_expires - eve_now()
+        return max(0, delta.days)  # floor; 0 means <1 day left
 
     def recompute_planned_pop(self, *, accept: bool = False, save: bool = True):
         """Refresh ``planned_pop_at`` from the live next pop + group cadence (§5.1).
