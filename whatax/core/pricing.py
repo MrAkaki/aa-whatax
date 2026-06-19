@@ -1,19 +1,4 @@
-"""Refined-value computation (TECHNICAL.md §7).
-
-Value the *minerals an ore reprocesses into*, not the raw ore order price. Janice
-exposes no refined-ore mode, so this is the only viable approach (§7 option 1):
-
-    refined_value(ore, qty)
-        = Σ_m  material_qty(ore, m)          # EveTypeMaterial yield per batch
-               × (qty / ore.portion_size)    # number of reprocess batches
-               × reprocessing_yield          # station/skill efficiency factor
-               × mineral_price(m)            # cached Janice market price (basis)
-
-Both ``reprocessing_yield`` and the mineral price ``basis`` come from
-``TaxConfiguration`` (Admin tab) and are recorded on each ``MiningSnapshot`` so
-historical bills stay reproducible. Fail loud on a Janice outage — the provider
-raises rather than returning zero (§7, §19).
-"""
+"""Refined-value computation: value the minerals an ore reprocesses into."""
 
 from decimal import Decimal
 from typing import Protocol
@@ -46,8 +31,7 @@ class ReprocessPriceProvider:
             return Decimal("0")
         materials = list(EveTypeMaterial.objects.filter(eve_type=ore_type))
         if not materials:
-            # No reprocessing recipe loaded for this ore — fail loud rather than
-            # silently value it at zero (likely a missing eveuniverse type).
+            # No reprocessing recipe loaded for this ore; fail loud rather than value at zero.
             raise JaniceError(f"no reprocessing materials for ore type {ore_type.id}")
         portion = Decimal(ore_type.portion_size or 1)
         batches = Decimal(quantity) / portion

@@ -123,9 +123,7 @@ class PlannedPopTest(TestCase):
         self.assertIsNone(s.planned_pop_at)
 
     def test_no_future_extraction_keeps_projection(self):
-        # The projection is sticky: once a pop fires and the next cycle isn't
-        # scheduled yet, the standing planned pop is kept so it can be compared
-        # against the reset extraction when it lands.
+        # Projection is sticky: kept until the next cycle is scheduled.
         s = self._struct(910102, "C", group=self.group)
         projection = self.now + dt.timedelta(days=7)
         s.planned_pop_at = projection
@@ -145,8 +143,7 @@ class PlannedPopTest(TestCase):
         self.assertIsNone(s.planned_pop_at)
 
     def test_on_schedule_reset_reprojects(self):
-        # planned holds the projected next reset (T1 + interval). When the reset
-        # lands on that day, the projection advances one more interval.
+        # On-schedule reset advances the projection one more interval.
         s = self._struct(910104, "E", group=self.group)
         t1 = self.now + dt.timedelta(days=2)
         self._extraction(s, t1)
@@ -173,7 +170,7 @@ class PlannedPopTest(TestCase):
         self._extraction(s, planned + dt.timedelta(days=2))
         s.recompute_planned_pop()
         s.refresh_from_db()
-        self.assertEqual(s.planned_pop_at, planned)  # kept -> deviation visible
+        self.assertEqual(s.planned_pop_at, planned)  # kept
 
     def test_accept_takes_new_schedule(self):
         s = self._struct(910106, "G", group=self.group)
@@ -288,7 +285,7 @@ class StaffStructuresViewTest(TestCase):
             content_type__app_label="whatax", codename="manage_payments"
         )
         self.user.user_permissions.add(perm)
-        # AllianceAuth gates app pages behind a registered main character.
+        # AA gates app pages behind a registered main character.
         main = _char(222333)
         CharacterOwnership.objects.create(character=main, owner_hash="mh2", user=self.user)
         profile = self.user.profile
@@ -309,7 +306,7 @@ class StaffStructuresViewTest(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Structures")
         self.assertContains(resp, "Refinery Z")
-        # A structure in no group lands in the trailing "Ungrouped" bucket.
+        # Ungrouped structures land in the trailing bucket.
         groups = resp.context["structure_groups"]
         self.assertEqual(len(groups), 1)
         self.assertIsNone(groups[0]["group"])
@@ -336,7 +333,7 @@ class StaffStructuresViewTest(TestCase):
         )
         off.planned_pop_at = now + dt.timedelta(days=9)
         off.save(update_fields=["planned_pop_at"])
-        # No-setup drill: ungrouped.
+        # No-setup drill.
         MiningStructure.objects.create(
             structure_id=900401, corporation=self.corp, name="Lonely Refinery"
         )
@@ -423,17 +420,14 @@ class StructuresReadViewTest(TestCase):
         self.assertContains(resp, "Drift Refinery")
         self.assertContains(resp, "Lonely Refinery")
         self.assertContains(resp, "not assigned to a group")
-        # Template doc comments must be {% comment %} blocks, not multi-line {# #}
-        # (which Django renders verbatim) — guard against that leaking on-page.
+        # Guard against template doc comments leaking on-page.
         self.assertNotContains(resp, "self-gates")
 
     def test_read_role_sees_no_dismiss_action_or_payment_data(self):
         self._off_schedule_drill()
         self.client.force_login(self.user)
         resp = self.client.get("/whatax/structures/")
-        # Read-only: the off-schedule warning shows but the dismiss form (the only
-        # mutation) is absent — match its endpoint, not the word "Dismiss" (the AA
-        # chrome uses it elsewhere).
+        # Read-only: the dismiss form (the only mutation) is absent.
         self.assertNotContains(resp, "dismiss-pop")
         # No payment/record surface leaks onto this page.
         self.assertNotContains(resp, "Unmatched payments")

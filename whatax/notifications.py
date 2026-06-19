@@ -1,32 +1,16 @@
-"""Notification dispatch (TECHNICAL.md §12).
-
-Webhook (dhooks-lite) + opt-in Discord DM. Every send is idempotent via the
-``notified_*_at`` stamp on the originating record — re-running a task never
-re-pings. End-of-month "tax due" fan-out is sent as one Celery task per player
-with rate-limit-aware retry so a single Discord 429 can't stall the batch.
-
-The broadcast webhook is reserved for exactly three events: **moon pop**
-(structure name + ore amounts), **moon dead** (structure name + a "leftovers
-optional" note), and **tax invoice** (a link to the dashboard to review it).
-Payment-received is DM-only — it never touches the broadcast webhook.
-"""
+"""Notification dispatch: broadcast webhook + opt-in Discord DM, idempotent per record."""
 
 import logging
 
+from whatax.core.config import get_config
 from whatax.core.timeutils import eve_now
 
 logger = logging.getLogger(__name__)
 
 
-def _config():
-    from whatax.models import TaxConfiguration
-
-    return TaxConfiguration.objects.get_solo()
-
-
 def _send_webhook(message: str = "", *, embed=None) -> bool:
     """Send to the configured broadcast webhook. Returns True on dispatch."""
-    config = _config()
+    config = get_config()
     url = config.broadcast_webhook_url
     if not url:
         logger.warning("whatax: no broadcast_webhook_url configured; skipping webhook")
@@ -80,15 +64,7 @@ def _dashboard_url() -> str:
 
 
 def _ore_amounts(extraction) -> str:
-    """Markdown bullet list of the chunk's ore composition (largest first).
-
-    The composition is snapshotted only from the ``MoonminingExtractionStarted``
-    notification (``ExtractionOre``); the pop event itself carries none. When that
-    notification was missed for this chunk (e.g. the cycle was already running when
-    the structure was first tracked), fall back to this structure's last known
-    chunk composition — a moon's ore types are fixed, so the previous chunk is a
-    close proxy — and flag it as approximate.
-    """
+    """Markdown bullet list of the chunk's ore composition, falling back to the prior chunk."""
     ores = list(extraction.ores.select_related("ore_type").order_by("-volume_m3"))
     if ores:
         return "\n".join(f"• {o.ore_type}: {o.volume_m3:,.0f} m³" for o in ores)
@@ -117,7 +93,7 @@ def notify_tax_due(record) -> bool:
     """Webhook + opt-in DM that an invoice was emitted (idempotent on notified_due_at)."""
     if record.notified_due_at is not None:
         return False
-    config = _config()
+    config = get_config()
     pay_to = config.payment_corporation
     url = _dashboard_url()
     due = f"{record.due_date:%Y-%m-%d}" if record.due_date else "—"
@@ -145,11 +121,7 @@ def notify_tax_due(record) -> bool:
 
 
 def notify_payment_received(payment) -> bool:
-    """Opt-in DM that a payment was matched (idempotent on notified_at).
-
-    DM-only by design: the broadcast webhook is reserved for moon-pop,
-    moon-dead and tax-invoice events.
-    """
+    """DM-only notice that a payment was matched (idempotent on notified_at)."""
     if payment.notified_at is not None or payment.user is None:
         return False
     msg = f"Payment received from **{payment.user}**: {payment.amount:,.2f} ISK."
@@ -160,10 +132,7 @@ def notify_payment_received(payment) -> bool:
 
 
 def notify_moon_pop(extraction) -> bool:
-    """Webhook that a moon chunk was fractured (idempotent on notified_pop_at).
-
-    Carries the structure name and the chunk's ore amounts.
-    """
+    """Webhook that a moon chunk was fractured (idempotent on notified_pop_at)."""
     if extraction.notified_pop_at is not None:
         return False
     description = (
@@ -177,10 +146,7 @@ def notify_moon_pop(extraction) -> bool:
 
 
 def notify_moon_dead(extraction) -> bool:
-    """Webhook that a moon hit the dead threshold (idempotent on notified_dead_at).
-
-    Carries the structure name and a note that the leftovers are optional.
-    """
+    """Webhook that a moon hit the dead threshold (idempotent on notified_dead_at)."""
     if extraction.notified_dead_at is not None:
         return False
     description = (

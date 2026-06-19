@@ -29,9 +29,7 @@ class LdapTimeTest(SimpleTestCase):
         self.assertEqual(parsed.tzinfo, dt.timezone.utc)
 
     def test_rounds_to_whole_second(self):
-        # Sub-second FILETIME ticks must round to a whole second so the
-        # notification-sourced chunk_arrival_time matches ESI's second-precision
-        # value and update_or_create dedupes the extraction (no duplicate row).
+        # Sub-second FILETIME ticks must round to a whole second.
         base = dt.datetime(2026, 8, 11, 10, 1, 2, tzinfo=dt.timezone.utc)
         ticks = int((base.timestamp() + 11644473600) * 10_000_000) - 901_000  # ~90 ms earlier
         parsed = moons.ldap_to_datetime(ticks)

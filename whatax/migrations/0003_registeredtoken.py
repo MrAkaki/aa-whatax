@@ -1,8 +1,4 @@
-# Hand-authored migration (see 0001_initial.py header).
-#
-# Adds RegisteredToken: whatax now records which esi tokens were granted through
-# its own Admin-tab buttons, instead of rescanning the shared esi.Token table by
-# scope (which surfaced unrelated tokens on an established AA install).
+# Hand-authored migration.
 import django.db.models.deletion
 from django.db import migrations, models
 

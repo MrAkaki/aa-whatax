@@ -1,10 +1,4 @@
-# Hand-authored migration (see 0001_initial.py header).
-#
-# Adds ProcessedNotification: an idempotency ledger keyed on the ESI
-# notification_id so the rolling notifications window (replayed every poll, and
-# possibly seen via several corp tokens) applies each moon-pop event — and fires
-# its Discord notification — at most once. The unique constraint is the race
-# guard: a concurrent double-poll loses on insert instead of double-popping.
+# Hand-authored migration.
 from django.db import migrations, models
 
 

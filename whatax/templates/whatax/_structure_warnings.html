@@ -1,9 +1,5 @@
 {% load i18n %}
-{% comment %}
-Structure warning panel (§15.2/§15.5). Shared by the Staff overview and the
-read-only Structures tab. The Dismiss action self-gates on manage_payments, so
-the view_structures read role sees the warnings but cannot act on them.
-{% endcomment %}
+{# Structure warning panel; Dismiss self-gates on manage_payments. #}
 {% if warn_no_setup or warn_off_schedule or warn_low_fuel %}
 <div class="card border-warning mb-3">
   <div class="card-header bg-warning text-dark">

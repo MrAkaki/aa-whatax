@@ -1,9 +1,4 @@
-# Hand-authored migration (see 0001_initial.py header).
-#
-# Adds the standalone read role `view_structures` (§14): drill pop schedule &
-# warnings, no payment data. The General model is managed=False (permissions
-# anchor only), so this only re-declares Meta.permissions; Django creates the
-# new Permission row on migrate. None of the roles imply each other in code.
+# Hand-authored migration.
 from django.db import migrations
 
 

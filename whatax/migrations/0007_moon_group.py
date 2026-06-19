@@ -1,11 +1,4 @@
-# Hand-authored migration (see 0001_initial.py header).
-#
-# Moon groups (§5.1): a MoonGroup bundles mining structures popped on a shared
-# cadence (schedule_interval_days). MiningStructure.group is a nullable FK — a
-# moon belongs to at most one group, a freshly-synced structure to none, and
-# reassigning the FK moves it out of any previous group. SET_NULL so deleting a
-# group leaves its structures intact (just ungrouped). The interval is stored
-# now and consumed later to project moon pop times.
+# Hand-authored migration.
 import django.db.models.deletion
 from django.db import migrations, models
 

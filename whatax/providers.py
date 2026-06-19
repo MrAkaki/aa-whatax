@@ -1,18 +1,4 @@
-"""External access singletons (TECHNICAL.md §6, §7).
-
-All ESI and Janice I/O is isolated here so it can be mocked in one place
-(TECHNICAL.md §18). Centralize ESI error-budget handling (420 / 5xx back-off
-with jitter, ETag/If-None-Match) here rather than at call sites (§6.3).
-
-Janice API (v2, confirmed against its OpenAPI spec):
-- base URL ``https://janice.e-351.com/api/rest/v2`` (``WHATAX_JANICE_BASE_URL``);
-- auth header ``X-ApiKey`` (key stored on ``TaxConfiguration``, never logged);
-- bulk price: ``POST /pricer?market=<id>`` (2 = Jita), body ``text/plain`` with
-  one type id per line; response is an array of items carrying ``itemType.eid``
-  and ``immediatePrices`` / ``top5AveragePrices`` → ``{buyPrice, splitPrice,
-  sellPrice, …}``. Janice has **no** refined-ore mode — only market prices — so
-  refined value is computed by us (``core.pricing``), not asked of Janice.
-"""
+"""External access singletons: ESI and Janice I/O isolated for mocking."""
 
 import logging
 from decimal import Decimal
@@ -24,14 +10,10 @@ from whatax import __version__, app_settings
 
 logger = logging.getLogger(__name__)
 
-# django-esi 9.x replaced the bravado-based ``esi.clients`` with an aiopenapi3
-# client in ``esi.openapi_clients``. The provider now needs a compatibility date
-# and User-Agent parts (appname/version/url), and must be scoped to the tags it
-# uses so the loaded spec stays small (required when ``DEBUG=False``). ESI now
-# returns model objects (attribute access), not dicts — see whatax/tasks.py.
+# django-esi 9.x aiopenapi3 client; scoped to the tags this app uses.
 from esi.openapi_clients import ESIClientProvider  # noqa: E402
 
-try:  # pin to the date the installed django-esi was built/tested against
+try:  # pin to the installed django-esi's compatibility date
     from esi import __esi_compatibility_date__ as _ESI_COMPATIBILITY_DATE
 except ImportError:  # pragma: no cover - fallback for other django-esi builds
     _ESI_COMPATIBILITY_DATE = "2026-05-19"
@@ -58,11 +40,11 @@ _BASIS_MAP = {
 
 
 class JaniceError(Exception):
-    """Raised on any Janice failure so pricing fails loud (never bills zero, §7)."""
+    """Raised on any Janice failure so pricing fails loud, never billing zero."""
 
 
 class JaniceClient:
-    """Thin, testable wrapper over the Janice v2 ``/pricer`` endpoint."""
+    """Thin, testable wrapper over the Janice v2 /pricer endpoint."""
 
     def __init__(self, api_key: str, *, base_url: str | None = None, timeout: int = 30):
         self.api_key = api_key
@@ -73,12 +55,7 @@ class JaniceClient:
         return f"whatax:janice:{market}:{basis}:{type_id}"
 
     def prices(self, type_ids, *, market: int | None = None, basis: str) -> dict[int, Decimal]:
-        """Return ``{type_id: price}`` for ``type_ids`` under the given basis.
-
-        Cached per (market, basis, type_id) for ``WHATAX_PRICE_CACHE_TTL``. Only
-        cache-missing ids hit the network. Raises :class:`JaniceError` on any
-        non-200, malformed body, or unknown basis.
-        """
+        """Return {type_id: price} under the given basis; cached, only misses hit the network."""
         market = market if market is not None else app_settings.WHATAX_JANICE_MARKET_ID
         if basis not in _BASIS_MAP:
             raise JaniceError(f"unknown price basis: {basis!r}")
@@ -114,7 +91,7 @@ class JaniceClient:
         except requests.RequestException as exc:
             raise JaniceError(f"Janice request failed: {exc}") from exc
         if resp.status_code != 200:
-            # Never log the key; log only the status.
+            # Log only the status, never the key.
             raise JaniceError(f"Janice returned HTTP {resp.status_code}")
         try:
             items = resp.json()

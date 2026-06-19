@@ -1,14 +1,4 @@
-/* Click-to-sort for Whale Tax data tables.
- *
- * Every <table class="whatax-paginate"> gets sortable headers: clicking a
- * non-empty <th> reorders the tbody rows by that column, toggling
- * ascending/descending on repeated clicks. Numeric columns (after stripping
- * thousands separators) sort numerically; everything else sorts as
- * case-insensitive strings.
- *
- * After reordering the DOM, the table fires a "whatax:sorted" event so
- * pagination.js can re-read its cached row order and re-page from page 1.
- */
+/* Click-to-sort for Whale Tax data tables. */
 (function () {
   "use strict";
 

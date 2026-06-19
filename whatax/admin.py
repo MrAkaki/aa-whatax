@@ -1,9 +1,4 @@
-"""Django admin registrations.
-
-Officer-facing workflows live in the app's own tabbed views (TECHNICAL.md §15);
-admin is a low-level inspection/support fallback only. The Janice API key is
-never exposed here (write-only secret, §5.1 security note).
-"""
+"""Django admin registrations (low-level inspection/support fallback)."""
 
 from django.contrib import admin
 
@@ -12,7 +7,7 @@ from whatax import models
 
 @admin.register(models.TaxConfiguration)
 class TaxConfigurationAdmin(admin.ModelAdmin):
-    # Deliberately exclude janice_api_key from list and detail views.
+    # Never expose janice_api_key (write-only secret).
     exclude = ("janice_api_key",)
     list_display = ("__str__", "default_tax_rate", "mineral_price_basis", "is_enabled")
 

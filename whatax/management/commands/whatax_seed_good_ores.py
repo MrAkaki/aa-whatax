@@ -1,11 +1,4 @@
-"""Seed the global good-ore default with all moon ore types (§11).
-
-Idempotent: re-running only adds missing rows. With ``--recompute`` it also
-re-evaluates existing extractions against the (now seeded) good-ore set so the
-backlog that was wedged at "popped" with a 0/NULL denominator flips to "dead"
-where appropriate. Backfilled transitions are stamped ``notified_dead_at`` so the
-historical pops do *not* fire a late Discord webhook (use ``--notify`` to send).
-"""
+"""Seed the global good-ore default with all moon ore types (idempotent)."""
 
 from django.core.management.base import BaseCommand
 from eveuniverse.models import EveType

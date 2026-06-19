@@ -1,9 +1,4 @@
-"""Alliance Auth hook registration (TECHNICAL.md §15).
-
-A MenuItemHook gated on ``whatax.basic_access`` (or the standalone
-``whatax.view_structures`` read role) and a UrlHook mounting the app under
-``^whatax/`` in the ``whatax`` namespace.
-"""
+"""Alliance Auth hook registration: gated menu item plus URL mount."""
 
 from allianceauth import hooks
 from allianceauth.services.hooks import MenuItemHook, UrlHook
@@ -20,13 +15,11 @@ class WhataxMenuItem(MenuItemHook):
             url_name="whatax:index",
             navactive=["whatax:"],
         )
-        # Custom template renders an inline whale SVG with a layered "$" instead
-        # of the single Font Awesome glyph (no whale exists in FA Free).
+        # Custom template renders an inline whale SVG (no whale glyph in FA Free).
         self.template = "whatax/menuitem.html"
 
     def render(self, request):
-        # Land on the dashboard for anyone with basic_access; for the standalone
-        # view_structures read role (no dashboard) point straight at Structures.
+        # Dashboard for basic_access; Structures for the view_structures read role.
         if request.user.has_perm("whatax.basic_access"):
             self.url_name = "whatax:index"
             return super().render(request)

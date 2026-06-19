@@ -1,8 +1,4 @@
-# Hand-authored migration (see 0001_initial.py header).
-#
-# Drops MiningStructure.eve_moon: the corp structures endpoint never provided a
-# moon_id so the column was always null, and the staff UI column was removed.
-# Moon data still lives on MoonExtraction.eve_moon, which is unaffected.
+# Hand-authored migration.
 from django.db import migrations
 
 

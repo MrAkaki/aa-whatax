@@ -1,25 +1,14 @@
-"""Ledger -> per-player snapshot aggregation (TECHNICAL.md §8).
-
-Resolve each ledger row to its **player** (AA ``User``) via
-``character_id -> EveCharacter -> CharacterOwnership.user``, group by
-``user`` + ``ore_type`` (+ excluded bucket) for the period and sum ``quantity``
-into ``MiningSnapshot`` rows. Idempotent: ledger rows are upserted on their
-natural key, so re-aggregation is safe to repeat.
-
-Edge cases (never silently drop ISK, §8/§19):
-- unowned character -> ``UNATTRIBUTED`` sentinel user, surfaced in the Staff tab;
-- no main set -> default rate at calc time, flagged;
-- ownership changed mid-month -> resolved as of the run; corp frozen on the bill.
-"""
+"""Ledger to per-player snapshot aggregation."""
 
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from allianceauth.authentication.models import CharacterOwnership
 from django.contrib.auth.models import User
 
+from whatax.core.money import round_money
 from whatax.core.moons import is_structure_excluded
 
 logger = logging.getLogger(__name__)
@@ -28,12 +17,7 @@ UNATTRIBUTED_USERNAME = "whatax_unattributed"
 
 
 def unattributed_user() -> User:
-    """The sentinel player that holds mining we can't attribute (§8).
-
-    A real (but inactive, unusable-password) ``auth.User`` so the non-null
-    ``PROTECT`` FK on snapshots/records stays satisfied without inventing a
-    nullable column.
-    """
+    """Sentinel player holding mining we can't attribute."""
     user, created = User.objects.get_or_create(
         username=UNATTRIBUTED_USERNAME,
         defaults={"is_active": False, "first_name": "UNATTRIBUTED"},
@@ -68,21 +52,12 @@ def resolve_player(character_id: int) -> PlayerResolution:
 
 
 def _resolve_miner_labels(character_ids):
-    """Batch-resolve a set of character_ids to display info.
-
-    Returns a dict ``character_id -> (label, is_registered, user_id)``:
-    - registered (has a ``CharacterOwnership``): label is the player's name,
-      ``user_id`` is set so all of a player's characters roll up into one row;
-    - unregistered: label is the character name (resolved via ``EveCharacter``
-      then eveuniverse ``EveEntity``, falling back to the raw id), ``user_id``
-      is ``None`` and the row is flagged for red rendering.
-    """
+    """Batch-resolve character_ids to ``(label, is_registered, user_id)``."""
     from allianceauth.eveonline.models import EveCharacter
 
     character_ids = set(character_ids)
     out: dict[int, tuple[str, bool, int | None]] = {}
 
-    # One query: every ownership whose character_id is in the set -> its user.
     owned = (
         CharacterOwnership.objects.filter(character__character_id__in=character_ids)
         .select_related("user", "character")
@@ -95,7 +70,7 @@ def _resolve_miner_labels(character_ids):
             user_label[uid] = _player_label(ownership.user)
         out[cid] = (user_label[uid], True, uid)
 
-    # Remaining ids are unregistered — resolve their character names.
+    # Remaining ids are unregistered; resolve their character names.
     unregistered = character_ids - set(out)
     if unregistered:
         names = dict(
@@ -133,11 +108,7 @@ def _resolve_entity_name(character_id) -> str:
 
 
 def monthly_mining_rows(year: int, month: int) -> list[dict]:
-    """Per (miner, structure, ore) summed-units rows for a calendar month (§15.2).
-
-    Registered characters roll up under their player; unregistered character_ids
-    each get their own row flagged ``is_registered=False`` (red in the UI).
-    """
+    """Per (miner, structure, ore) summed-units rows for a calendar month."""
     from whatax.models import MiningLedgerEntry
 
     entries = MiningLedgerEntry.objects.filter(
@@ -146,8 +117,7 @@ def monthly_mining_rows(year: int, month: int) -> list[dict]:
 
     labels = _resolve_miner_labels(entries.values_list("character_id", flat=True))
 
-    # Group key: (miner identity, structure_id, ore_type_id). Registered miners
-    # key on user_id so multiple characters merge; unregistered key on char id.
+    # Registered miners key on user_id so characters merge; unregistered key on char id.
     totals: dict[tuple, int] = defaultdict(int)
     meta: dict[tuple, dict] = {}
     for entry in entries:
@@ -176,22 +146,13 @@ def monthly_mining_rows(year: int, month: int) -> list[dict]:
 
 
 def unregistered_character_rows(period, config=None) -> list[dict]:
-    """Per unregistered character: refined value & tax for the period (§8/§15.2).
-
-    Unregistered mining is stored aggregated under the `whatax_unattributed`
-    sentinel; here we re-derive a per-character breakdown for display. Unit
-    refined value per ore is taken from the sentinel's snapshots (so it matches
-    the figures used at calc time) and applied to each character's ledger
-    quantities. Tax mirrors calculate_period: only non-excluded mining is taxed
-    at the default rate.
-    """
+    """Per unregistered character: refined value and tax for the period."""
     from whatax.models import MiningLedgerEntry, TaxConfiguration
 
     config = config or TaxConfiguration.objects.get_solo()
     sentinel = unattributed_user()
 
-    # Per (ore_type_id, is_excluded) unit refined value, from the sentinel's
-    # snapshots — the source of truth for what was priced at calc time.
+    # Per (ore_type_id, is_excluded) unit refined value, from the sentinel's snapshots.
     unit_price: dict[tuple[int, bool], Decimal] = {}
     for snap in period.snapshots.filter(user=sentinel):
         if snap.quantity:
@@ -226,14 +187,11 @@ def unregistered_character_rows(period, config=None) -> list[dict]:
         seen.setdefault(entry.character_id, label)
 
     rate = config.default_tax_rate
-    cent = Decimal("0.01")
     rows = []
     for character_id, label in seen.items():
-        # Round to 2 decimals (cents) like every stored money field, so the rows
-        # — and the per-table totals summed from them — never show more precision.
-        refined_value = refined[character_id].quantize(cent, rounding=ROUND_HALF_UP)
-        taxable_value = taxable[character_id].quantize(cent, rounding=ROUND_HALF_UP)
-        tax_due = (taxable_value * rate).quantize(cent, rounding=ROUND_HALF_UP)
+        refined_value = round_money(refined[character_id])
+        taxable_value = round_money(taxable[character_id])
+        tax_due = round_money(taxable_value * rate)
         rows.append(
             {
                 "character_id": character_id,
@@ -248,25 +206,13 @@ def unregistered_character_rows(period, config=None) -> list[dict]:
 
 
 def unregistered_character_breakdown(period, character_id, config=None) -> dict:
-    """Per-(structure, ore) mining drill-down for one unregistered character (§15.2).
-
-    The single-character analogue of ``unregistered_character_rows``: it reuses the
-    same source of truth (unit refined value from the sentinel's snapshots, applied
-    to the character's raw ledger quantities) but breaks the character's mining out
-    into one row per (structure, ore) with summed quantity, refined value, whether
-    that structure is excluded, and tax due. Tax mirrors ``calculate_period``: only
-    non-excluded mining is taxed at the default rate. ISK is rounded to cents with
-    ROUND_HALF_UP like every stored money field.
-
-    Returns ``{"label", "is_registered", "rows", "total_refined", "total_tax"}``.
-    """
+    """Per-(structure, ore) mining drill-down for one unregistered character."""
     from whatax.models import MiningLedgerEntry, TaxConfiguration
 
     config = config or TaxConfiguration.objects.get_solo()
     sentinel = unattributed_user()
 
-    # Per (ore_type_id, is_excluded) unit refined value, from the sentinel's
-    # snapshots — same calc-time figures used by unregistered_character_rows.
+    # Per (ore_type_id, is_excluded) unit refined value, from the sentinel's snapshots.
     unit_price: dict[tuple[int, bool], Decimal] = {}
     for snap in period.snapshots.filter(user=sentinel):
         if snap.quantity:
@@ -299,7 +245,6 @@ def unregistered_character_breakdown(period, character_id, config=None) -> dict:
             }
 
     rate = config.default_tax_rate
-    cent = Decimal("0.01")
     rows = []
     total_refined = Decimal("0")
     total_tax = Decimal("0")
@@ -307,11 +252,11 @@ def unregistered_character_breakdown(period, character_id, config=None) -> dict:
         info = meta[key]
         excluded = info["excluded"]
         price = unit_price.get((key[1], excluded), Decimal("0"))
-        refined_value = (units * price).quantize(cent, rounding=ROUND_HALF_UP)
+        refined_value = round_money(units * price)
         tax_due = (
             Decimal("0")
             if excluded
-            else (units * price * rate).quantize(cent, rounding=ROUND_HALF_UP)
+            else round_money(units * price * rate)
         )
         total_refined += refined_value
         total_tax += tax_due
@@ -337,36 +282,12 @@ def unregistered_character_breakdown(period, character_id, config=None) -> dict:
 
 
 def player_ore_breakdown(period, user) -> dict:
-    """Per-(character, ore) mining pivot for one player in one period (§8/§15.2).
-
-    Builds the data behind the per-player drill-down on ``period_detail``: a pivot
-    with one column per distinct ore the player mined this period and one row per
-    of the player's individual characters, the cell being that character's summed
-    quantity of that ore from the raw ledger. See ``player_ore_breakdown_for_month``
-    for the returned shape; this is the ``TaxPeriod``-keyed wrapper used by staff.
-    """
+    """Per-(character, ore) mining pivot for one player in one period."""
     return player_ore_breakdown_for_month(user, period.year, period.month)
 
 
 def player_ore_breakdown_for_month(user, year: int, month: int) -> dict:
-    """Per-(character, ore) mining pivot for one player in a calendar month (§15.1).
-
-    The user-facing form (own dashboard) and shared engine behind
-    ``player_ore_breakdown``: the units pivot is built straight from the raw
-    ledger, so it works for the open, not-yet-calculated month. Each ore column's
-    ISK value is the column's total units × the player's refined **unit** price
-    from that month's ``MiningSnapshot`` rows (excluded + non-excluded buckets
-    summed, matching the figures used at calc time); it is 0 before the month is
-    calculated or for any ore lacking a snapshot. ISK is rounded to cents with
-    ROUND_HALF_UP like every stored money field.
-
-    Returns a dict (cell/total lists are column-aligned to ``ores`` so templates
-    can iterate without dict-by-key lookups):
-    - ``ores``: ordered list of distinct ore names mined this month;
-    - ``characters``: ``[{"label", "cells": [qty, ...]}]``, one per character;
-    - ``totals_units``: ``[qty, ...]`` summed across the player's characters;
-    - ``totals_isk``: ``[Decimal, ...]`` refined ISK value of each ore's total.
-    """
+    """Per-(character, ore) mining pivot for one player in a calendar month."""
     from whatax.models import MiningLedgerEntry, TaxPeriod
 
     character_ids = list(
@@ -383,7 +304,7 @@ def player_ore_breakdown_for_month(user, year: int, month: int) -> dict:
         character_id__in=ids,
     ).select_related("ore_type")
 
-    # (character_id, ore_type_id) -> summed quantity; track ore names + totals.
+    # (character_id, ore_type_id) -> summed quantity.
     cells: dict[tuple[int, int], int] = defaultdict(int)
     totals_units_by_id: dict[int, int] = defaultdict(int)
     ore_name: dict[int, str] = {}
@@ -392,8 +313,7 @@ def player_ore_breakdown_for_month(user, year: int, month: int) -> dict:
         totals_units_by_id[entry.ore_type_id] += entry.quantity
         ore_name.setdefault(entry.ore_type_id, entry.ore_type.name)
 
-    # Per ore_type_id refined unit price from this user's snapshots (both buckets
-    # summed), when the month has a (calculated) period; 0 otherwise.
+    # Per ore_type_id refined unit price from this user's snapshots; 0 if uncalculated.
     snap_qty: dict[int, int] = defaultdict(int)
     snap_value: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
     period = TaxPeriod.objects.filter(year=year, month=month).first()
@@ -410,8 +330,7 @@ def player_ore_breakdown_for_month(user, year: int, month: int) -> dict:
     ore_type_ids = sorted(totals_units_by_id, key=lambda oid: ore_name[oid].lower())
     ores = [ore_name[oid] for oid in ore_type_ids]
 
-    # Characters that mined this month, ordered by name; keep label resolution
-    # graceful for a character missing from EveCharacter (fall back to its id).
+    # Characters that mined this month, ordered by name; fall back to id if unnamed.
     mined_char_ids = {cid for (cid, _oid) in cells}
     characters = []
     for cid in sorted(
@@ -425,11 +344,8 @@ def player_ore_breakdown_for_month(user, year: int, month: int) -> dict:
         )
 
     totals_units = [totals_units_by_id[oid] for oid in ore_type_ids]
-    cent = Decimal("0.01")
     totals_isk = [
-        (totals_units_by_id[oid] * unit_price.get(oid, Decimal("0"))).quantize(
-            cent, rounding=ROUND_HALF_UP
-        )
+        round_money(totals_units_by_id[oid] * unit_price.get(oid, Decimal("0")))
         for oid in ore_type_ids
     ]
 
@@ -442,11 +358,7 @@ def player_ore_breakdown_for_month(user, year: int, month: int) -> dict:
 
 
 def aggregate_period(period, config=None) -> int:
-    """(Re)build ``MiningSnapshot`` rows for ``period`` from raw ledger entries.
-
-    Returns the number of snapshot rows touched. Refined value is left at 0 here
-    and filled by ``core.tax.price_period``.
-    """
+    """(Re)build ``MiningSnapshot`` rows for ``period`` from raw ledger entries."""
     from whatax.models import MiningLedgerEntry, MiningSnapshot, TaxConfiguration
 
     config = config or TaxConfiguration.objects.get_solo()

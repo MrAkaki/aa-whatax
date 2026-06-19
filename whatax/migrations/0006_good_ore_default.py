@@ -1,10 +1,4 @@
-# Hand-authored migration (see 0001_initial.py header).
-#
-# Good-ore set for moon dead-detection becomes a global default + per-structure
-# override (§11). GoodOreDefault is the global list (seeded with all moon ores by
-# the whatax_seed_good_ores command); StructureGoodOre.include flips a row between
-# an add ("good here even if not a global default") and an exclude ("not good
-# here"). The effective set is resolved in core.moons.good_ore_ids_for.
+# Hand-authored migration.
 import django.db.models.deletion
 from django.db import migrations, models
 

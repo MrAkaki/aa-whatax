@@ -1,16 +1,4 @@
-"""Data model (TECHNICAL.md §5).
-
-Conventions:
-- raw tables: unique key on the *source* identifier (idempotent upsert);
-- derived tables: ``unique_together`` on their natural key;
-- FKs to AA / eveuniverse use ``on_delete=PROTECT`` unless cascade is clearly
-  correct;
-- money is ``DecimalField(max_digits=20, decimal_places=2)`` — never float;
-- tax rates are ``DecimalField(max_digits=5, decimal_places=4)``;
-- volumes (m³) are ``DecimalField(max_digits=24, decimal_places=2)``.
-
-All timestamps are EVE time (= UTC), produced via ``core.timeutils`` (§9/§16).
-"""
+"""Data model."""
 
 import datetime as dt
 from decimal import Decimal
@@ -30,19 +18,14 @@ from whatax.managers import (
     TaxRecordManager,
 )
 
-# Decimal field shapes used throughout.
+# Decimal field shapes.
 _MONEY = dict(max_digits=20, decimal_places=2)
 _RATE = dict(max_digits=5, decimal_places=4)
 _VOLUME = dict(max_digits=24, decimal_places=2)
 
 
 class General(models.Model):
-    """Permissions anchor only — not a real table (TECHNICAL.md §14).
-
-    Three cumulative roles: user ⊂ staff ⊂ admin, plus a standalone read role
-    ``view_structures`` (drill pop schedule & warnings, no payment data). None
-    imply the others in code; each view checks the specific permission it needs.
-    """
+    """Permissions anchor only — not a real table."""
 
     class Meta:
         managed = False
@@ -53,11 +36,6 @@ class General(models.Model):
             ("manage_payments", "STAFF: fix payments, add/remove balances, view all records"),
             ("admin_access", "ADMIN: configuration & dangerous actions (keys, rates, exclusions, calc)"),
         )
-
-
-# ---------------------------------------------------------------------------
-# 5.1 Configuration
-# ---------------------------------------------------------------------------
 
 
 class TaxConfiguration(models.Model):
@@ -85,9 +63,9 @@ class TaxConfiguration(models.Model):
     payment_wallet_division = models.PositiveSmallIntegerField(default=1, help_text=_("1–7."))
     broadcast_webhook_url = models.URLField(blank=True, max_length=500)
     janice_api_key = models.CharField(
-        max_length=255, blank=True, help_text=_("Stored in DB; never rendered back (§5.1).")
+        max_length=255, blank=True, help_text=_("Stored in DB; never rendered back.")
     )
-    # Pricing controls (moved here from settings; recorded on each snapshot).
+    # Pricing controls; recorded on each snapshot.
     reprocessing_yield = models.DecimalField(
         default=app_settings.REPROCESSING_YIELD_DEFAULT,
         help_text=_("Refined-value efficiency factor, e.g. 0.906."),
@@ -124,13 +102,7 @@ class TaxConfiguration(models.Model):
 
 
 class RegisteredToken(models.Model):
-    """An ESI token granted *through whatax's Admin tab* (TECHNICAL.md §6.1).
-
-    django-esi stores every SSO token in one global table, shared across all AA
-    apps; on an established install most of those predate whatax. We record the
-    ones granted here so the Admin UI and the syncs use only those — never some
-    unrelated token that merely happens to carry the same scope.
-    """
+    """An ESI token granted through whatax's Admin tab."""
 
     class Purpose(models.TextChoices):
         STRUCTURES = "structures", _("Structures & moons")
@@ -165,11 +137,7 @@ class CorporationTaxRate(models.Model):
 
 
 class MoonGroup(models.Model):
-    """A named set of mining structures popped on a shared schedule.
-
-    ``schedule_interval_days`` is the intended cadence (in days) between pops
-    for the moons in this group; consumed later to project pop times.
-    """
+    """A named set of mining structures popped on a shared schedule."""
 
     name = models.CharField(max_length=100, unique=True)
     schedule_interval_days = models.PositiveSmallIntegerField(
@@ -222,44 +190,18 @@ class MiningStructure(models.Model):
         return max(0, delta.days)  # floor; 0 means <1 day left
 
     def recompute_planned_pop(self, *, accept: bool = False, save: bool = True):
-        """Refresh ``planned_pop_at`` from the live next pop + group cadence (§5.1).
-
-        ``planned_pop_at`` is the soonest still-future ``chunk_arrival_time`` (the
-        live "next pop") shifted forward by the group's ``schedule_interval_days``
-        — the projected pop *after* the next one, and therefore the day the *next*
-        reset is expected to arrive on. To make a drill being reset off-schedule
-        detectable, the projection is **sticky**: it only re-projects from the
-        live next pop when
-
-        - there is no projection yet (first extraction), or
-        - the live next pop lands on the projected day (an on-schedule reset), or
-        - ``accept`` is set (staff dismissing the deviation, taking the new dates).
-
-        When a reset lands on a *different* day the standing projection is kept, so
-        ``next_pop + interval`` no longer matches it and the deviation stays visible
-        (see :func:`whatax.views._structure_pop_warnings`) until staff dismiss it or
-        fix the drill in game (a later sync then lands on-schedule and re-projects).
-        It is ``None`` only when the structure is ungrouped. Call this wherever the
-        inputs change: extraction sync, pop application, or group (re)assignment.
-        """
+        """Refresh sticky ``planned_pop_at`` from the live next pop + group cadence."""
         next_pop = None
         if self.group_id is not None:
             next_pop = (
                 self.extractions.filter(chunk_arrival_time__gte=eve_now())
-                .exclude(
-                    status__in=[
-                        MoonExtraction.Status.POPPED,
-                        MoonExtraction.Status.DEAD,
-                        MoonExtraction.Status.CANCELLED,
-                    ]
-                )
+                .exclude(status__in=MoonExtraction.TERMINAL_STATUSES)
                 .aggregate(models.Min("chunk_arrival_time"))["chunk_arrival_time__min"]
             )
         if self.group_id is None:
             planned = None
         elif next_pop is None:
-            # Pop fired but the next cycle isn't scheduled yet: keep the standing
-            # projection so we can compare it once the new extraction lands.
+            # Pop fired but next cycle not scheduled yet: keep standing projection.
             planned = self.planned_pop_at
         elif (
             accept
@@ -268,8 +210,7 @@ class MiningStructure(models.Model):
         ):
             planned = next_pop + dt.timedelta(days=self.group.schedule_interval_days)
         else:
-            # Reset to a day other than planned: keep the projection so the
-            # deviation stays visible until dismissed or fixed in game.
+            # Off-schedule reset: keep projection so the deviation stays visible.
             planned = self.planned_pop_at
         self.planned_pop_at = planned
         if save:
@@ -278,12 +219,7 @@ class MiningStructure(models.Model):
 
 
 class GoodOreDefault(models.Model):
-    """Global good-ore set: ores that "count" at every structure by default.
-
-    Seeded with all moon ore types (``whatax_seed_good_ores``). The effective
-    good-ore set for a structure is this list, minus that structure's excludes,
-    plus its includes (see ``StructureGoodOre`` and ``core.moons.good_ore_ids_for``).
-    """
+    """Global good-ore set: ores that count at every structure by default."""
 
     ore_type = models.OneToOneField(EveType, on_delete=models.PROTECT, related_name="+")
 
@@ -292,11 +228,7 @@ class GoodOreDefault(models.Model):
 
 
 class StructureGoodOre(models.Model):
-    """Per-structure override of the global good-ore set (dead-detection).
-
-    ``include=True`` forces an ore good at this structure even if it's not in the
-    global default; ``include=False`` excludes a global-default ore here.
-    """
+    """Per-structure override of the global good-ore set (dead-detection)."""
 
     structure = models.ForeignKey(MiningStructure, on_delete=models.CASCADE, related_name="good_ores")
     ore_type = models.ForeignKey(EveType, on_delete=models.PROTECT, related_name="+")
@@ -312,11 +244,6 @@ class StructureGoodOre(models.Model):
     def __str__(self):
         verb = "good" if self.include else "excluded"
         return f"{self.structure}: {self.ore_type} ({verb})"
-
-
-# ---------------------------------------------------------------------------
-# 5.2 Periods & raw ledger
-# ---------------------------------------------------------------------------
 
 
 class TaxPeriod(models.Model):
@@ -346,7 +273,7 @@ class TaxPeriod(models.Model):
 
 
 class MiningLedgerEntry(models.Model):
-    """Raw observer rows — the single source of truth for mining (§5.2)."""
+    """Raw observer rows — the single source of truth for mining."""
 
     structure = models.ForeignKey(MiningStructure, on_delete=models.CASCADE, related_name="ledger_entries")
     character_id = models.BigIntegerField(db_index=True)
@@ -368,11 +295,6 @@ class MiningLedgerEntry(models.Model):
         return f"{self.character_id} {self.ore_type} x{self.quantity} @ {self.recorded_date}"
 
 
-# ---------------------------------------------------------------------------
-# 5.3 Derived: snapshots & tax
-# ---------------------------------------------------------------------------
-
-
 class MiningSnapshot(models.Model):
     """Aggregated mining per player/ore/period (derived from ledger entries)."""
 
@@ -381,7 +303,7 @@ class MiningSnapshot(models.Model):
     ore_type = models.ForeignKey(EveType, on_delete=models.PROTECT, related_name="+")
     quantity = models.BigIntegerField()
     refined_value = models.DecimalField(default=Decimal("0"), **_MONEY)
-    # Reproducibility: freeze the pricing inputs used at calc time.
+    # Freeze the pricing inputs used at calc time.
     reprocessing_yield_applied = models.DecimalField(null=True, blank=True, **_RATE)
     price_basis_applied = models.CharField(max_length=20, blank=True)
     is_excluded = models.BooleanField(
@@ -392,9 +314,7 @@ class MiningSnapshot(models.Model):
 
     class Meta:
         constraints = [
-            # is_excluded is part of the key so a player who mines the same ore
-            # at both a taxed and an excluded structure gets one row per bucket;
-            # tax sums only is_excluded=False, the excluded bucket is shown untaxed.
+            # is_excluded is part of the key: one row per taxed/excluded bucket.
             models.UniqueConstraint(
                 fields=["tax_period", "user", "ore_type", "is_excluded"],
                 name="whatax_snapshot_unique",
@@ -406,7 +326,7 @@ class MiningSnapshot(models.Model):
 
 
 class TaxRecord(models.Model):
-    """The bill, per player/period (§5.3)."""
+    """The bill, per player/period."""
 
     class Status(models.TextChoices):
         PENDING = "pending", _("Pending")
@@ -424,7 +344,7 @@ class TaxRecord(models.Model):
     )
     flat_discount_applied = models.DecimalField(
         default=Decimal("0"),
-        help_text=_("Corp flat discount subtracted at calc; recorded for transparency (§9)."),
+        help_text=_("Corp flat discount subtracted at calc; recorded for transparency."),
         **_MONEY,
     )
     tax_due = models.DecimalField(
@@ -456,18 +376,13 @@ class TaxRecord(models.Model):
 
     @property
     def settled(self) -> Decimal:
-        """Amount counted toward the bill: payments + manual adjustments (§10)."""
+        """Amount counted toward the bill: payments + manual adjustments."""
         return self.amount_paid + self.adjustments_total
 
     @property
     def balance(self) -> Decimal:
-        """Signed balance: negative = owed, 0 = settled, positive = credit (§5.3)."""
+        """Signed balance: negative = owed, 0 = settled, positive = credit."""
         return self.settled - self.tax_due
-
-
-# ---------------------------------------------------------------------------
-# 5.4 Payments
-# ---------------------------------------------------------------------------
 
 
 class WalletJournalEntry(models.Model):
@@ -546,11 +461,6 @@ class TaxRecordEdit(models.Model):
         return f"edit {self.old_tax_due}->{self.new_tax_due} on {self.tax_record_id}"
 
 
-# ---------------------------------------------------------------------------
-# 5.5 Moon tracking
-# ---------------------------------------------------------------------------
-
-
 class MoonExtraction(models.Model):
     """One extraction cycle for a structure (a.k.a. MoonCycle)."""
 
@@ -560,6 +470,9 @@ class MoonExtraction(models.Model):
         POPPED = "popped", _("Popped")
         DEAD = "dead", _("Dead")
         CANCELLED = "cancelled", _("Cancelled")
+
+    # Statuses past which an extraction is no longer pending/upcoming.
+    TERMINAL_STATUSES = {Status.POPPED, Status.DEAD, Status.CANCELLED}
 
     structure = models.ForeignKey(MiningStructure, on_delete=models.CASCADE, related_name="extractions")
     eve_moon = models.ForeignKey(EveMoon, on_delete=models.PROTECT, null=True, blank=True, related_name="+")
@@ -611,11 +524,6 @@ class ExtractionOre(models.Model):
         return f"{self.extraction}: {self.ore_type} {self.volume_m3} m³"
 
 
-# ---------------------------------------------------------------------------
-# Notifications (§12)
-# ---------------------------------------------------------------------------
-
-
 class PlayerNotificationPref(models.Model):
     """Opt-in Discord DM preference per player."""
 
@@ -627,15 +535,7 @@ class PlayerNotificationPref(models.Model):
 
 
 class ProcessedNotification(models.Model):
-    """Idempotency ledger for ESI corp notifications already applied (§11/§12).
-
-    ``GetCharactersCharacterIdNotifications`` returns a rolling window of recent
-    notifications on *every* poll, so the same ``MoonminingLaserFired`` /
-    ``MoonminingAutomaticFracture`` event reappears for weeks. Recording each
-    notification's stable ESI ``notification_id`` here — behind a unique
-    constraint so a concurrent double-poll loses the race instead of
-    double-applying — guarantees a pop is processed (and notified) at most once.
-    """
+    """Idempotency ledger for ESI corp notifications already applied."""
 
     notification_id = models.BigIntegerField()
     notification_type = models.CharField(max_length=64)

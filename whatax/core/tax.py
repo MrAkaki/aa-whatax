@@ -1,19 +1,8 @@
-"""Rate resolution + tax calculation (TECHNICAL.md §9).
-
-For each player with (non-excluded) mining in the period:
-    total = Σ snapshot.refined_value
-    rate  = CorporationTaxRate for the main char's corp, else default_tax_rate
-    tax_due = (total × rate).quantize(0.01, ROUND_HALF_UP)
-then upsert the ``TaxRecord``. Wrapped in a per-period transaction and
-idempotent: re-running recomputes total/rate/original_tax_due but preserves
-``amount_paid``, payment links, and any staff ``TaxRecordEdit`` (tax_due keeps a
-correction; original_tax_due re-tracks the computed value). ``emitted_at`` /
-``due_date`` are set once at first emission and never moved.
-"""
+"""Rate resolution and tax calculation."""
 
 import datetime as dt
 import logging
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Sum
@@ -21,19 +10,14 @@ from django.db.models import Sum
 from whatax.core import pricing
 from whatax.core.aggregation import aggregate_period, unattributed_user
 from whatax.core.matching import recompute_status
+from whatax.core.money import round_money
 from whatax.core.timeutils import eve_now
 
 logger = logging.getLogger(__name__)
 
-CENT = Decimal("0.01")
-
 
 def resolve_rate_for_user(user, config):
-    """Return ``(rate, flat_discount, corporation_obj, has_main)`` for a player (§9).
-
-    ``flat_discount`` is the per-corp ISK amount subtracted from this player's
-    monthly charge (floored at 0); 0 when the corp has no override.
-    """
+    """Return ``(rate, flat_discount, corporation_obj, has_main)`` for a player."""
     from allianceauth.eveonline.models import EveCorporationInfo
     from whatax.models import CorporationTaxRate
 
@@ -76,9 +60,7 @@ def calculate_period(period, *, provider=None, config=None, now=None):
     aggregate_period(period, config)
     price_period(period, provider, config=config)
 
-    # Σ non-excluded refined value per player. The unattributed sentinel is not a
-    # payable player — its mining is billed per unregistered character in the
-    # Unregistered table (§8/§15.2), so it never gets a TaxRecord of its own.
+    # Sum non-excluded refined value per player; the sentinel never gets a TaxRecord.
     sentinel_id = unattributed_user().id
     rows = (
         period.snapshots.filter(is_excluded=False)
@@ -96,9 +78,8 @@ def calculate_period(period, *, provider=None, config=None, now=None):
             record = TaxRecord(tax_period=period, user_id=user_id)
 
         rate, discount, corp_obj, _has_main = resolve_rate_for_user(record.user, config)
-        gross = (total * rate).quantize(CENT, rounding=ROUND_HALF_UP)
-        # Flat corp discount reduces the charge but never below 0; only the
-        # portion actually used is recorded (so it reconciles: gross − applied).
+        gross = round_money(total * rate)
+        # Flat corp discount reduces the charge but never below 0; record the portion used.
         applied_discount = min(discount, gross) if discount > 0 else Decimal("0")
         charge = gross - applied_discount
 
@@ -106,7 +87,7 @@ def calculate_period(period, *, provider=None, config=None, now=None):
         record.tax_rate_applied = rate
         record.flat_discount_applied = applied_discount
         record.original_tax_due = charge
-        # A staff market-correction edit wins; otherwise tax_due tracks the calc.
+        # A staff edit wins; otherwise tax_due tracks the calc.
         if not record.pk or not record.edits.exists():
             record.tax_due = charge
         record.corporation_at_calc = corp_obj
@@ -123,12 +104,7 @@ def calculate_period(period, *, provider=None, config=None, now=None):
 
 
 def apply_tax_edit(record, new_tax_due: Decimal, *, reason: str, user, now=None):
-    """Staff correction of ``tax_due`` within the edit window (§5.4/§15.2).
-
-    Server-side guard: only allowed while ``now <= emitted_at +
-    tax_edit_window_days``. ``original_tax_due`` is never touched. Returns the
-    created ``TaxRecordEdit``.
-    """
+    """Staff correction of ``tax_due`` within the edit window."""
     from whatax.models import TaxConfiguration, TaxRecordEdit
 
     config = TaxConfiguration.objects.get_solo()
@@ -139,7 +115,7 @@ def apply_tax_edit(record, new_tax_due: Decimal, *, reason: str, user, now=None)
     if now > deadline:
         raise ValueError("tax edit window has closed")
 
-    new_tax_due = Decimal(new_tax_due).quantize(CENT, rounding=ROUND_HALF_UP)
+    new_tax_due = round_money(new_tax_due)
     edit = TaxRecordEdit.objects.create(
         tax_record=record,
         old_tax_due=record.tax_due,

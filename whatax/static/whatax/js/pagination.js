@@ -1,17 +1,4 @@
-/* Client-side table pagination for Whale Tax.
- *
- * Every <table class="whatax-paginate"> gets a controller that owns which body
- * rows are visible. It is the single place that toggles row display so sorting
- * (sort.js, "whatax:sorted") and searching (search.js, "whatax:filtered") just
- * reorder rows or flag them out, then let this re-page.
- *
- * "Visible" rows are those not filtered out by search; when there are more than
- * PAGE_SIZE of them a Bootstrap pager appears and only the current page shows,
- * otherwise the pager hides and every matching row is shown. Pagination is
- * purely visual — rows are rendered by the server, so links and forms inside
- * them keep working. The "No records." placeholder row (a single cell spanning
- * the table) is shown only when nothing else matches.
- */
+/* Client-side table pagination for Whale Tax. */
 (function () {
   "use strict";
 

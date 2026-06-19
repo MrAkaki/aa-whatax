@@ -1,8 +1,4 @@
-"""Forms for the Admin / Staff tabs (TECHNICAL.md §15.2/§15.3).
-
-The Janice key is **write-only**: never rendered back, and a blank submission
-keeps the stored value (so the field shows "set / not set", not the secret).
-"""
+"""Forms for the Admin / Staff tabs. The Janice key is write-only."""
 
 from decimal import Decimal
 
@@ -18,8 +14,7 @@ from whatax.models import (
     TaxConfiguration,
 )
 
-# Asteroid category (ores + their compressed/moon variants) — keeps the ore_type
-# pickers to a sane list instead of every EveType in the universe.
+# Asteroid category (ores + their compressed/moon variants) for ore_type pickers.
 _ASTEROID_CATEGORY_ID = 25
 
 
@@ -38,10 +33,8 @@ class TaxConfigurationForm(forms.ModelForm):
         model = TaxConfiguration
         fields = [
             "default_tax_rate",
-            # payment_corporation is intentionally omitted: it is derived from the
-            # wallet token's character corp (set in views.add_wallet_token), never
-            # picked by hand. payment_wallet_division is likewise omitted — players
-            # can only transfer ISK to the master wallet (division 1, the default).
+            # payment_corporation and payment_wallet_division are omitted: derived,
+            # not picked by hand.
             "broadcast_webhook_url",
             "janice_api_key",
             "reprocessing_yield",
@@ -56,7 +49,7 @@ class TaxConfigurationForm(forms.ModelForm):
 
     def clean_janice_api_key(self):
         submitted = self.cleaned_data.get("janice_api_key", "")
-        # Blank => keep the existing stored key (write-only field).
+        # Blank keeps the existing stored key.
         return submitted or self.instance.janice_api_key
 
 
@@ -73,7 +66,7 @@ class CorporationTaxRateForm(forms.ModelForm):
 
 
 class GoodOreDefaultForm(forms.ModelForm):
-    """Add an ore to the global good-ore default set (§11)."""
+    """Add an ore to the global good-ore default set."""
 
     class Meta:
         model = GoodOreDefault
@@ -127,11 +120,7 @@ class BalanceAdjustmentForm(forms.ModelForm):
 
 
 class OffWalletPaymentForm(forms.Form):
-    """Record a payment a player made outside the corp wallet (§10).
-
-    Booked as a positive ``BalanceAdjustment`` (a credit); the staff comment
-    becomes its ``reason`` so the off-wallet payment is auditable.
-    """
+    """Record a payment a player made outside the corp wallet."""
 
     amount = forms.DecimalField(
         max_digits=20,

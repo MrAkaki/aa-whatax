@@ -1,16 +1,9 @@
-"""Views (TECHNICAL.md §15).
-
-Thin entry points: resolve permissions, delegate to ``core/`` and ``managers``,
-render. Object-level scoping lives in managers (``TaxRecord.objects.visible_to``),
-never inline here or in templates. The UI is a tabbed single app gated by the
-three §14 roles; templates hide tabs the user can't access.
-"""
+"""Views: resolve permissions, delegate to core/managers, render."""
 
 import datetime as dt
 from decimal import Decimal
 
 from django.contrib import messages
-from django.contrib.auth.decorators import login_required, permission_required
 from django.db.models import Min, Q, Sum
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -18,9 +11,14 @@ from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 from esi.decorators import token_required
 
-# Scope bundles for the two corp tokens added from the Admin tab (TECHNICAL.md §6.1).
-# One char per corp grants each bundle; the role behind the token (Director /
-# Accountant) is what ESI actually checks, so a token can have the scope yet 403.
+from whatax.decorators import (
+    admin_required,
+    basic_access_required,
+    staff_required,
+    structures_required,
+)
+
+# Scope bundles for the two corp tokens added from the Admin tab.
 STRUCTURE_TOKEN_SCOPES = [
     "esi-corporations.read_structures.v1",  # corp structures (sync_structures)
     "esi-industry.read_corporation_mining.v1",  # observer ledger + moon extractions
@@ -68,19 +66,9 @@ from whatax.models import (
 # --- Dashboard (user) -------------------------------------------------------
 
 
-@login_required
-@permission_required("whatax.basic_access")
+@basic_access_required
 def index(request):
-    """Dashboard: moon pops, own 6-month mining graph, own char×ore, tax (§15.1).
-
-    Pops are bucketed per :class:`MoonGroup` (one card each, responsive 2-col grid
-    in the template); a card lists its *recently popped* (not dead) and *upcoming*
-    extractions by structure name and date. The mining graph charts the player's
-    own refined ISK value over the latest six periods, summed from their
-    ``MiningSnapshot`` rows (matches their bills; the open month reads 0 until
-    calc runs). The char×ore table pivots the player's own mining for a selected
-    month, with prev/next month navigation.
-    """
+    """Dashboard: moon pops, own 6-month mining graph, own char-ore, tax."""
     now = eve_now()
 
     upcoming_frags = MoonExtraction.objects.filter(
@@ -132,10 +120,7 @@ def index(request):
 
 
 def _selected_month(request, now):
-    """Resolve the (year, month) for the dashboard ore table from GET, default now.
-
-    Bad / out-of-range input falls back to the current EVE month rather than 500.
-    """
+    """Resolve (year, month) for the dashboard ore table from GET, default now."""
     try:
         year = int(request.GET.get("year", now.year))
         month = int(request.GET.get("month", now.month))
@@ -147,12 +132,7 @@ def _selected_month(request, now):
 
 
 def _merge_frag_groups(current_frags, upcoming_frags):
-    """Bucket current (recently popped) + upcoming extractions per :class:`MoonGroup`.
-
-    Returns ``[{"group": MoonGroup|None, "current": [...], "upcoming": [...]}]``
-    ordered by group name with the ungrouped bucket last, so the template renders
-    one pop card per group (§15.1). Only buckets with any pops appear.
-    """
+    """Bucket current + upcoming extractions per MoonGroup, ungrouped last."""
     buckets: dict = {}
     for frag in current_frags:
         buckets.setdefault(frag.structure.group, {"current": [], "upcoming": []})[
@@ -178,15 +158,7 @@ def _merge_frag_groups(current_frags, upcoming_frags):
 
 
 def _attach_character_search(records):
-    """Tag each record with its player's other character names for table search.
-
-    The staff/period record tables show one row per player (the main character's
-    name). To let a search box surface a player when one of their *alts* matches
-    the typed text, we stash that player's full character-name list on the row
-    via ``record.character_search`` (rendered into ``data-search``; search.js
-    folds it into the match text). Returns the records as a list so the template
-    iterates the same objects we annotated.
-    """
+    """Tag each record with its player's character names for table search."""
     from allianceauth.authentication.models import CharacterOwnership
 
     records = list(records)
@@ -201,22 +173,9 @@ def _attach_character_search(records):
     return records
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 def staff(request):
-    """All records for a period, unmatched payments, totals, ore-value graph (§15.2).
-
-    The unattributed sentinel is excluded — its miners are surfaced per-character
-    in the Unregistered table (Outstanding sub-tab), matching ``period_detail``
-    and ``staff_outstanding``.
-
-    The page also charts "total estimated ore value" per period at the top: the
-    sum of every ``MiningSnapshot.refined_value`` in a period (excluded and
-    non-excluded alike — the priced value of ore mined, not the tax). We chart
-    the latest six periods, oldest-first for left-to-right reading, and scale
-    each bar against the max so the graph stays dependency-free (pure CSS bars,
-    no JS chart library, §15).
-    """
+    """All records for a period, unmatched payments, totals, ore-value graph."""
     period_id = request.GET.get("period")
     period = (
         TaxPeriod.objects.filter(pk=period_id).first()
@@ -260,20 +219,9 @@ def staff(request):
     return render(request, "whatax/staff.html", context)
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 def staff_outstanding(request):
-    """Staff sub-tab: who owes money and who mined unregistered (§15.2).
-
-    Two tables, each with a grand total:
-    - **Debts**: per player, the sum of negative ``TaxRecord.balance`` across all
-      periods (``balance`` is a Python property, so we filter in Python, not SQL).
-      The unattributed sentinel is excluded — its miners are the second table.
-    - **Unregistered**: characters that mined in the current and previous month
-      but have no ``CharacterOwnership``. Values reuse ``unregistered_character_rows``
-      for whichever of the two periods exist, merged per character so the figures
-      match the rest of the app.
-    """
+    """Staff sub-tab: who owes money and who mined unregistered."""
     sentinel = unattributed_user()
 
     # --- Table A: outstanding debts per player ---
@@ -334,20 +282,9 @@ def staff_outstanding(request):
     return render(request, "whatax/staff_outstanding.html", context)
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 def staff_payments(request):
-    """Staff sub-tab: every payment and balance adjustment in one table (§15.2).
-
-    A single combined, sortable ledger of money movement. Each row is a payment
-    (auto/manual/unmatched) or a manual balance adjustment, attributed to the
-    player it belongs to. ``Remaining`` is the *current* balance on the
-    associated ``TaxRecord`` (a Python property, read here rather than in SQL);
-    unmatched payments have no record, so it shows "—". The combined list is
-    sorted by date descending in Python (``balance`` / the merge can't be done
-    in SQL); the template's ``whatax-paginate`` table makes the headers
-    click-to-sort.
-    """
+    """Staff sub-tab: every payment and balance adjustment in one table."""
     payments = Payment.objects.select_related("user", "tax_record", "tax_record__user")
     adjustments = BalanceAdjustment.objects.select_related("tax_record", "tax_record__user")
 
@@ -397,15 +334,7 @@ def staff_payments(request):
 
 
 def _group_by_moongroup(items, group_of):
-    """Bucket ``items`` into per-:class:`MoonGroup` tables, ungrouped last.
-
-    ``group_of(item)`` returns the item's :class:`MoonGroup` (or ``None``).
-    Returns a list of ``{"group": MoonGroup|None, "items": [...]}`` ordered by
-    group name, with the ungrouped bucket (``group`` is ``None``) appended last
-    when it has any items. Order within each bucket follows ``items``. This is
-    the shared shape every "structures/pops list" renders as one table per
-    group plus a final table for moons that belong to no group (§5.1).
-    """
+    """Bucket items into per-MoonGroup tables, ungrouped last."""
     buckets: dict = {}
     for item in items:
         buckets.setdefault(group_of(item), []).append(item)
@@ -422,12 +351,7 @@ def _group_by_moongroup(items, group_of):
 
 
 def _structures_next_pop():
-    """All mining structures annotated with their next upcoming pop (§15.2).
-
-    ``next_pop`` is the soonest future ``chunk_arrival_time`` (the moment a chunk
-    arrives and the moon can be fractured) among extractions that haven't already
-    popped, decayed or been cancelled; ``None`` when nothing is scheduled.
-    """
+    """All mining structures annotated with their next upcoming pop."""
     from whatax.models import MiningStructure
 
     now = eve_now()
@@ -452,24 +376,7 @@ def _structures_next_pop():
 
 
 def _structure_pop_warnings(structures):
-    """Split the annotated structures into the staff warning lists (§15.2).
-
-    ``structures`` is a :func:`_structures_next_pop` queryset (``next_pop``
-    annotated, ``group`` selected). Inactive structures are skipped — they are
-    excluded from tax, so an idle drill there is expected. Returns
-    ``(no_setup, off_schedule, low_fuel)`` where
-
-    - **no_setup**: ``{"structure", "reason"}`` for drills that can't be
-      scheduled/tracked — no :class:`MoonGroup` (no cadence) or no upcoming pop.
-    - **off_schedule**: ``{"structure", "planned", "actual"}`` for drills whose
-      next pop fell on a different day than the standing projection, i.e. the
-      drill was reset off the planned schedule (``planned_pop_at`` is sticky, so
-      ``next_pop + interval`` only matches it while on schedule — see
-      :meth:`MiningStructure.recompute_planned_pop`).
-    - **low_fuel**: ``{"structure", "fuel_expires", "next_pop"}`` for drills whose
-      fuel runs out before their next pop, so the chunk goes unmined unless they
-      are refuelled first.
-    """
+    """Split annotated structures into (no_setup, off_schedule, low_fuel) lists."""
     no_setup, off_schedule, low_fuel = [], [], []
     for s in structures:
         if not s.is_active:
@@ -497,16 +404,10 @@ def _structure_pop_warnings(structures):
     return no_setup, off_schedule, low_fuel
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 @require_POST
 def structure_pop_dismiss(request, structure_id):
-    """Accept a drill's off-schedule reset: re-project from the new dates (§15.2).
-
-    Clears the off-schedule warning by taking the live next pop as the schedule
-    going forward. Alternatively staff fix the drill in game and a later sync
-    re-projects on its own.
-    """
+    """Accept a drill's off-schedule reset: re-project from the new dates."""
     structure = get_object_or_404(MiningStructure, pk=structure_id)
     structure.recompute_planned_pop(accept=True)
     messages.success(
@@ -516,18 +417,9 @@ def structure_pop_dismiss(request, structure_id):
     return redirect("whatax:staff")
 
 
-@login_required
-@permission_required("whatax.view_structures")
+@structures_required
 def structures(request):
-    """Read-only drill pop schedule & warnings — no payment data (§15.5).
-
-    The dedicated page for the ``view_structures`` read role (e.g. a fuel/drill
-    reset group): the same structure warning panel and per-group pop tables the
-    Staff overview shows, but nothing about players, records or payments. It is
-    read-only — there is no dismiss action here; an off-schedule warning clears
-    when the drill is reset on-schedule in game and the next sync re-projects
-    (dismissing the deviation outright stays a ``manage_payments`` action).
-    """
+    """Read-only drill pop schedule & warnings, no payment data."""
     structure_list = list(_structures_next_pop())
     warn_no_setup, warn_off_schedule, warn_low_fuel = _structure_pop_warnings(structure_list)
     context = {
@@ -540,14 +432,9 @@ def structures(request):
     return render(request, "whatax/structures.html", context)
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 def staff_mining_month(request, year, month):
-    """Per-month mining table grouped by miner / structure / ore (§15.2).
-
-    Registered characters roll up under their player; unregistered character_ids
-    each get a red-flagged row. Reachable from the months list on the Staff tab.
-    """
+    """Per-month mining table grouped by miner / structure / ore."""
     from whatax.core.aggregation import monthly_mining_rows
 
     context = {
@@ -569,10 +456,9 @@ def _mining_months():
     ]
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 def period_detail(request, period_id):
-    """Per-player / per-ore breakdown for a period, incl. excluded bucket (§15.2)."""
+    """Per-player / per-ore breakdown for a period, incl. excluded bucket."""
     period = get_object_or_404(TaxPeriod, pk=period_id)
     sentinel = unattributed_user()
     context = {
@@ -590,15 +476,9 @@ def period_detail(request, period_id):
     return render(request, "whatax/period_detail.html", context)
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 def period_player_detail(request, period_id, user_id):
-    """Per-player drill-down for a period: ore pivot + that record's tax (§15.2).
-
-    The pivot (``player_ore_breakdown``) shows exactly what each of the player's
-    characters mined this period; below it we surface the player's ``TaxRecord``
-    figures (mined value, rate, flat discount, tax due) for context.
-    """
+    """Per-player drill-down for a period: ore pivot + that record's tax."""
     from django.contrib.auth.models import User
 
     period = get_object_or_404(TaxPeriod, pk=period_id)
@@ -617,15 +497,9 @@ def period_player_detail(request, period_id, user_id):
     return render(request, "whatax/period_player_detail.html", context)
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 def period_unregistered_detail(request, period_id, character_id):
-    """Per-ore mining drill-down for one unregistered character in a period (§15.2).
-
-    The unregistered counterpart to ``period_player_detail``: it surfaces exactly
-    what an untracked miner mined this period (per structure & ore, with refined
-    value and tax) so staff can see why they appear in the unregistered table.
-    """
+    """Per-ore mining drill-down for one unregistered character in a period."""
     period = get_object_or_404(TaxPeriod, pk=period_id)
     context = {
         "active_tab": "staff",
@@ -637,8 +511,7 @@ def period_unregistered_detail(request, period_id, character_id):
     return render(request, "whatax/period_unregistered_detail.html", context)
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 @require_POST
 def payment_match(request, payment_id):
     """Assign an unmatched payment to a record (manual match)."""
@@ -650,8 +523,7 @@ def payment_match(request, payment_id):
     return redirect("whatax:staff")
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 @require_POST
 def record_adjust(request, record_id):
     """Add/remove balance on a record (creates an audited BalanceAdjustment)."""
@@ -670,16 +542,10 @@ def record_adjust(request, record_id):
     return redirect("whatax:period", period_id=record.tax_period_id)
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 @require_POST
 def record_add_payment(request, record_id):
-    """Record a payment a player made outside the corp wallet (Staff, §10).
-
-    Players normally pay into the monitored wallet, but a staff member may need
-    to credit a payment made another way. It is booked as an audited credit on
-    the record, with the staff comment kept as the reason.
-    """
+    """Record a payment a player made outside the corp wallet (staff)."""
     record = get_object_or_404(TaxRecord, pk=record_id)
     form = OffWalletPaymentForm(request.POST)
     if form.is_valid():
@@ -695,11 +561,10 @@ def record_add_payment(request, record_id):
     return redirect(reverse("whatax:staff") + f"?period={record.tax_period_id}")
 
 
-@login_required
-@permission_required("whatax.manage_payments")
+@staff_required
 @require_POST
 def record_edit_tax(request, record_id):
-    """Correct a bill's tax_due within the edit window (§15.2)."""
+    """Correct a bill's tax_due within the edit window."""
     record = get_object_or_404(TaxRecord, pk=record_id)
     form = TaxEditForm(request.POST)
     if form.is_valid():
@@ -721,8 +586,7 @@ def record_edit_tax(request, record_id):
 # --- Admin ------------------------------------------------------------------
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @require_POST
 def record_waive(request, record_id):
     """Forgive a bill entirely (admin)."""
@@ -738,10 +602,9 @@ def record_waive(request, record_id):
     return redirect("whatax:period", period_id=record.tax_period_id)
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 def admin_config(request):
-    """The dangerous configuration surface (§15.3)."""
+    """The dangerous configuration surface."""
     config = TaxConfiguration.objects.get_solo()
     form = TaxConfigurationForm(instance=config)
     corp_rate_form = CorporationTaxRateForm()
@@ -822,15 +685,10 @@ def _corp_for_character(character_id):
     return corp
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @token_required(scopes=STRUCTURE_TOKEN_SCOPES)
 def add_structures_token(request, token):
-    """Add a corp token for structures, moon extractions and notifications (§6.1).
-
-    ``@token_required`` runs the EVE SSO flow and stores the token; the synced
-    tasks pick it up via ``_corp_token``. Grant from a Director-role char.
-    """
+    """Add a corp token for structures, moon extractions and notifications."""
     RegisteredToken.objects.update_or_create(
         token=token, defaults={"purpose": RegisteredToken.Purpose.STRUCTURES}
     )
@@ -840,15 +698,10 @@ def add_structures_token(request, token):
     return redirect("whatax:admin")
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @token_required(scopes=WALLET_TOKEN_SCOPES)
 def add_wallet_token(request, token):
-    """Add the payment-corp wallet token (§6.1). Grant from an Accountant-role char.
-
-    The payment corporation is *defined by* this token: we set it to the token
-    char's corp rather than have an admin pick it separately.
-    """
+    """Add the payment-corp wallet token; payment corp is set to the token's corp."""
     RegisteredToken.objects.update_or_create(
         token=token, defaults={"purpose": RegisteredToken.Purpose.WALLET}
     )
@@ -864,8 +717,7 @@ def add_wallet_token(request, token):
     return redirect("whatax:admin")
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @require_POST
 def remove_token(request, token_id):
     """Delete a corp ESI token (admin). Syncs stop using it on the next run."""
@@ -890,8 +742,7 @@ def remove_token(request, token_id):
     return redirect("whatax:admin")
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @require_POST
 def run_calc(request):
     """Run / re-run calc for a period (admin)."""
@@ -906,8 +757,7 @@ def run_calc(request):
     return redirect("whatax:admin")
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @require_POST
 def corp_rate_delete(request, rate_id):
     """Remove a per-corporation tax override (admin)."""
@@ -917,15 +767,9 @@ def corp_rate_delete(request, rate_id):
     return redirect("whatax:admin")
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 def admin_good_ores(request):
-    """Manage the good-ore set for moon dead-detection (§11).
-
-    The global default list (seeded with all moon ores) applies everywhere; the
-    per-structure overrides add or exclude ores at a single structure. Edits take
-    effect on the next ``update_moon_status`` recompute.
-    """
+    """Manage the good-ore set for moon dead-detection."""
     default_form = GoodOreDefaultForm()
     override_form = StructureGoodOreForm()
 
@@ -964,8 +808,7 @@ def admin_good_ores(request):
     return render(request, "whatax/admin_good_ores.html", context)
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @require_POST
 def good_ore_default_delete(request, default_id):
     """Remove an ore from the global good-ore default set (admin)."""
@@ -974,8 +817,7 @@ def good_ore_default_delete(request, default_id):
     return redirect("whatax:admin_good_ores")
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @require_POST
 def structure_good_ore_delete(request, override_id):
     """Remove a per-structure good-ore override (admin)."""
@@ -984,15 +826,9 @@ def structure_good_ore_delete(request, override_id):
     return redirect("whatax:admin_good_ores")
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 def admin_groups(request):
-    """Manage moon groups: create groups and assign structures to them (§5.1).
-
-    A structure belongs to at most one group; assigning it to a group moves it
-    out of any previous one. ``schedule_interval_days`` is stored for the later
-    pop-time projection. New / unassigned structures have ``group = None``.
-    """
+    """Manage moon groups: create groups and assign structures to them."""
     group_form = MoonGroupForm()
 
     if request.method == "POST":
@@ -1022,8 +858,7 @@ def admin_groups(request):
     return render(request, "whatax/admin_groups.html", context)
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @require_POST
 def moon_group_delete(request, group_id):
     """Delete a moon group (admin). Its structures survive, just ungrouped."""
@@ -1032,8 +867,7 @@ def moon_group_delete(request, group_id):
     return redirect("whatax:admin_groups")
 
 
-@login_required
-@permission_required("whatax.admin_access")
+@admin_required
 @require_POST
 def moon_group_remove_structure(request, structure_id):
     """Remove a structure from its group (admin) — sets group to none."""

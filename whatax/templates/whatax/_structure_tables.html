@@ -1,9 +1,5 @@
 {% load i18n %}
-{% comment %}
-Per-group structure pop tables (§15.2/§15.5). Read-only; shared by the Staff
-overview and the read-only Structures tab. Expects ``structure_groups`` from
-whatax.views._group_by_moongroup.
-{% endcomment %}
+{# Read-only per-group structure pop tables. #}
 <div class="row">
 {% for bucket in structure_groups %}
 <div class="col-12 col-xl-6">

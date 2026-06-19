@@ -1,22 +1,4 @@
-"""Wallet inflow -> tax record matching (TECHNICAL.md §10).
-
-For each unprocessed inflow: resolve payer
-(``first_party_id -> EveCharacter -> CharacterOwnership.user``), apply the amount
-to that player's outstanding ``TaxRecord``s oldest-period-first, recompute each
-touched record's ``status``, then mark the journal entry processed.
-
-Unmatched inflows are stored (``match_method='unmatched'``, ``tax_record=NULL``)
-for manual assignment — money is never auto-discarded. Idempotent on
-``WalletJournalEntry.entry_id`` + ``is_processed`` (never double-credits).
-``reason`` memo is a secondary hint only, not authority.
-
-Note on allocation: a single transfer is one ``Payment`` (OneToOne with the
-journal entry) whose ``amount`` is the full transfer; the amount is *allocated*
-oldest-first across the player's outstanding bills by incrementing each record's
-``amount_paid`` by its share, so ``amount_paid`` is the allocated total. Any
-overpayment beyond all outstanding bills is left unallocated and surfaced in the
-Staff tab.
-"""
+"""Wallet inflow to tax record matching."""
 
 import logging
 from decimal import Decimal
@@ -32,10 +14,7 @@ PAYMENT_REF_TYPES = {"player_donation"}
 
 
 def recompute_status(record):
-    """Recompute and persist ``status`` from the settled total (§10).
-
-    Preserves a ``waived`` record. ``settled = amount_paid + Σ adjustments``.
-    """
+    """Recompute and persist ``status`` from the settled total."""
     from whatax.models import TaxRecord
 
     if record.status == TaxRecord.Status.WAIVED:
@@ -141,7 +120,7 @@ def reconcile_payments(config=None) -> int:
 
 
 def add_balance_adjustment(record, amount: Decimal, *, reason: str, user):
-    """Staff manual credit/debit on a record (§5.4). Recomputes status."""
+    """Staff manual credit/debit on a record; recomputes status."""
     from whatax.models import BalanceAdjustment
 
     adj = BalanceAdjustment.objects.create(

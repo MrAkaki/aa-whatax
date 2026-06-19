@@ -83,8 +83,7 @@ class PlayerOreBreakdownTest(TestCase):
         self._entry(700001, self.sylvite, 40, 2)
         self._entry(700002, self.bitumens, 250, 3)
 
-        # Snapshots set the refined unit price: Bitumens = 350 qty / 700 value = 2/u;
-        # Sylvite = 40 qty / 200 value = 5/u.
+        # Snapshots set the refined unit price.
         MiningSnapshot.objects.create(
             tax_period=self.period,
             user=self.user,

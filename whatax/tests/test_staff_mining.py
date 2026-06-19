@@ -13,12 +13,7 @@ from whatax.models import MiningLedgerEntry, MiningStructure
 
 
 def _ore_type(type_id, name):
-    """Create an ``EveType`` plus the group/category chain it requires.
-
-    eveuniverse's ``EveType.eve_group`` is a non-null FK (and ``EveGroup`` needs
-    an ``EveCategory``), so a bare ``EveType.objects.create(id=..., name=...)``
-    trips a NOT NULL constraint. Build the minimal chain once and reuse it.
-    """
+    """Create an ``EveType`` plus its required group/category chain."""
     cat, _ = EveCategory.objects.get_or_create(
         id=25, defaults={"name": "Asteroid", "published": True}
     )
@@ -113,8 +108,7 @@ class MonthlyMiningRowsTest(TestCase):
         self.assertEqual(row["units"], 999)
 
     def test_unregistered_unknown_char_falls_back_to_id(self):
-        # No EveCharacter, no ownership; name resolution must not crash and
-        # falls back to the raw character_id as a string.
+        # No EveCharacter, no ownership -> falls back to the raw id string.
         self._entry(123456789, self.ore, 5, dt.date(2026, 5, 5))
         rows = monthly_mining_rows(2026, 5)
         self.assertEqual(len(rows), 1)
@@ -184,9 +178,7 @@ class StaffMiningViewTest(TestCase):
             content_type__app_label="whatax", codename="manage_payments"
         )
         self.user.user_permissions.add(perm)
-        # AllianceAuth gates app pages behind a registered main character, so a
-        # bare permissioned user is still redirected to the dashboard. Give the
-        # staffer a main so the view is actually reachable in the test.
+        # AllianceAuth gates app pages behind a registered main character.
         main = _char(111222)
         CharacterOwnership.objects.create(character=main, owner_hash="mainhash", user=self.user)
         profile = self.user.profile
@@ -212,11 +204,7 @@ class StaffMiningViewTest(TestCase):
         self.assertContains(resp, "555555")
 
     def test_overview_excludes_unattributed_sentinel(self):
-        """The staff overview records table must not list the sentinel.
-
-        Its unregistered miners are surfaced per-character in the Unregistered
-        table instead, matching ``period_detail`` / ``staff_outstanding``.
-        """
+        """The staff overview records table must not list the sentinel."""
         from django.utils import timezone
 
         from whatax.core.aggregation import unattributed_user

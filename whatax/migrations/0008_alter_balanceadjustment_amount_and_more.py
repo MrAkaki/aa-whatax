@@ -96,7 +96,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='taxconfiguration',
             name='janice_api_key',
-            field=models.CharField(blank=True, help_text='Stored in DB; never rendered back (§5.1).', max_length=255),
+            field=models.CharField(blank=True, help_text='Stored in DB; never rendered back.', max_length=255),
         ),
         migrations.AlterField(
             model_name='taxconfiguration',

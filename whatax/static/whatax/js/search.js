@@ -1,22 +1,4 @@
-/* Client-side search box for Whale Tax data tables.
- *
- * Every <table class="whatax-paginate"> gets a search input rendered above it.
- * Typing filters the tbody rows to those that match, then fires a
- * "whatax:filtered" event so pagination.js re-pages the surviving rows. Like
- * sorting and pagination, this is purely visual — it shows/hides rows already
- * rendered by the server, so links and forms inside rows keep working.
- *
- * What a query matches depends on the table's columns:
- *   - if any header is a name column (Structure / Player / Character / Miner /
- *     Payer / Payee) we match only those columns, so a structure table searches
- *     by structure name and a player table by player name — not by amounts,
- *     dates or systems that happen to share the typed text;
- *   - otherwise (no name column) we fall back to matching the whole row.
- * A row's optional data-search attribute is always included in the match text:
- * the staff/period record tables put a player's *other* character names there so
- * a player row surfaces when one of their characters matches the query (the main
- * character name is already shown in the Player cell).
- */
+/* Client-side search box for Whale Tax data tables. */
 (function () {
   "use strict";
 

@@ -1,6 +1,6 @@
 /* Whale Tax app styles. */
 
-/* Click-to-sort table headers (see js/sort.js). */
+/* Click-to-sort table headers. */
 .whatax-sortable {
   cursor: pointer;
   user-select: none;
@@ -25,7 +25,7 @@
   opacity: 1;
 }
 
-/* Per-table search box (see js/search.js). */
+/* Per-table search box. */
 .whatax-search {
   max-width: 20rem;
 }

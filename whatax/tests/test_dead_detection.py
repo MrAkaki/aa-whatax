@@ -1,9 +1,4 @@
-"""Dead-detection over the global-default + per-structure-override good-ore set.
-
-Pins the prod bug these replaced: with no good ore configured the denominator
-was stored as 0 (not NULL), so extractions wedged at "popped" forever and no
-dead notification ever fired (see core.moons.recompute_dead).
-"""
+"""Dead-detection over the global-default + per-structure-override good-ore set."""
 
 import datetime as dt
 from decimal import Decimal
@@ -73,7 +68,7 @@ class RecomputeDeadTest(TestCase):
             chunk_arrival_time=_ARRIVAL,
             status=MoonExtraction.Status.POPPED,
         )
-        # Chunk composition snapshot: 1000 m³ of good ore = the denominator.
+        # Chunk composition: 1000 m³ = the denominator.
         self.extraction.ores.create(ore_type=self.ore, volume_m3=Decimal("1000"), is_good_ore=False)
 
     def _mine(self, quantity):
@@ -105,7 +100,7 @@ class RecomputeDeadTest(TestCase):
         self.assertEqual(self.extraction.status, MoonExtraction.Status.POPPED)
 
     def test_no_good_ore_leaves_null_denominator(self):
-        # Nothing in GoodOreDefault -> composition effectively unknown -> NULL, skip.
+        # No good ore -> denominator unknown -> NULL, skip.
         self.extraction.total_good_ore_m3 = Decimal("0")
         self.extraction.save(update_fields=["total_good_ore_m3"])
         self._mine(96)
@@ -116,7 +111,7 @@ class RecomputeDeadTest(TestCase):
         self.assertIsNone(self.extraction.total_good_ore_m3)
 
     def test_config_change_is_retroactive(self):
-        # Initially no good ore -> skip; then seed the default and re-run.
+        # No good ore -> skip; then seed the default and re-run.
         self._mine(96)
         self.assertFalse(moons.recompute_dead(self.extraction))
         GoodOreDefault.objects.create(ore_type=self.ore)

@@ -1,4 +1,4 @@
-"""Staff Payments sub-tab: combined payments + adjustments ledger (§15.2)."""
+"""Staff Payments sub-tab: combined payments + adjustments ledger."""
 
 import datetime as dt
 from decimal import Decimal
@@ -35,8 +35,7 @@ class StaffPaymentsViewTest(TestCase):
             content_type__app_label="whatax", codename="manage_payments"
         )
         self.user.user_permissions.add(perm)
-        # AllianceAuth gates app pages behind a registered main character, so a
-        # bare permissioned user is still redirected; give the staffer a main.
+        # AllianceAuth gates app pages behind a registered main character.
         main = _char(111222)
         CharacterOwnership.objects.create(character=main, owner_hash="mainhash", user=self.user)
         profile = self.user.profile

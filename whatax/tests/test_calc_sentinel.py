@@ -1,10 +1,4 @@
-"""calculate_period never bills the unattributed sentinel (§8/§15.2).
-
-The sentinel holds mining we can't attribute to a registered player; that ISK is
-surfaced per unregistered character in the Unregistered table, so the sentinel
-must not get a ``TaxRecord`` of its own (which nobody could pay and which would
-double-count the per-character tax).
-"""
+"""calculate_period never bills the unattributed sentinel."""
 
 import datetime as dt
 from decimal import Decimal
@@ -37,7 +31,7 @@ def _ore_type(type_id=46300, name="Bitumens"):
 
 
 class _StubProvider:
-    """Prices 1 ISK of refined value per unit, deterministically."""
+    """Prices 1 ISK of refined value per unit."""
 
     reprocessing_yield = Decimal("0.78")
     basis = "test"
@@ -60,7 +54,6 @@ class CalcSkipsSentinelTest(TestCase):
         self.ore = _ore_type()
         self.config = TaxConfiguration.objects.get_solo()
 
-        # A registered player (gets a bill) ...
         self.player = User.objects.create(username="payer")
         main = EveCharacter.objects.create(
             character_id=700001,
@@ -92,8 +85,8 @@ class CalcSkipsSentinelTest(TestCase):
         )
 
     def test_sentinel_gets_no_tax_record(self):
-        self._entry(700001, 1000)  # registered -> player
-        self._entry(999999, 5000)  # unregistered -> sentinel
+        self._entry(700001, 1000)  # registered
+        self._entry(999999, 5000)  # unregistered
 
         tax.calculate_period(self.period, provider=_StubProvider(), config=self.config)
 
@@ -101,8 +94,7 @@ class CalcSkipsSentinelTest(TestCase):
         self.assertFalse(
             TaxRecord.objects.filter(tax_period=self.period, user=sentinel).exists()
         )
-        # The real player is still billed, and the sentinel's snapshots survive
-        # (they price the Unregistered table).
+        # Real player is still billed; sentinel snapshots survive.
         self.assertTrue(
             TaxRecord.objects.filter(tax_period=self.period, user=self.player).exists()
         )

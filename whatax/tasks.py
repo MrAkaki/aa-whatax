@@ -1,14 +1,4 @@
-"""Celery task entry points (TECHNICAL.md §8, §10, §13).
-
-Thin ``@shared_task`` wrappers around ``core/`` logic. Every scheduled task
-short-circuits when ``TaxConfiguration.is_enabled`` is False and acquires a
-Django-cache lock to prevent overlapping runs of the same sync (§13). ESI
-fan-out uses per-structure subtasks with ``autoretry_for`` / ``retry_backoff`` so
-one slow/failing structure is isolated (§6.3).
-
-ESI response field names below use the stable public-ESI names; verify against
-the live schema in your env when first wiring this up.
-"""
+"""Celery task entry points: thin shared_task wrappers around core/ logic."""
 
 import datetime as dt
 import logging
@@ -22,17 +12,18 @@ from eveuniverse.models import EveMoon, EveSolarSystem, EveType
 
 from whatax import providers
 from whatax.core import matching, moons, tax
+from whatax.core.config import get_config
 from whatax.core.timeutils import eve_now, month_bounds, previous_month
 
 logger = logging.getLogger(__name__)
 
-_LOCK_TTL = 3600  # seconds; a lock auto-expires so a crashed task can't wedge.
+_LOCK_TTL = 3600  # seconds; auto-expires so a crashed task can't wedge.
 _RETRY = dict(autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, max_retries=5)
 
 
 @contextmanager
 def _lock(key: str):
-    """Best-effort non-overlapping lock via cache.add (atomic on most backends)."""
+    """Best-effort non-overlapping lock via cache.add."""
     acquired = cache.add(f"whatax:lock:{key}", "1", _LOCK_TTL)
     try:
         yield acquired
@@ -42,42 +33,19 @@ def _lock(key: str):
 
 
 def _results(operation, force_refresh: bool = False):
-    """Run an ESI ``.results()`` call, treating a 304/ETag hit as "no change".
-
-    django-esi raises :class:`~esi.exceptions.HTTPNotModified` when every page
-    matched its stored ETag, i.e. nothing changed since the last successful
-    sync. That is the normal ETag fast-path (§6.3), not a failure, so we return
-    an empty result set and let the caller's upsert loop no-op — the rows we
-    already persisted are still current. Without this the bare exception bubbles
-    through ``autoretry_for=(Exception,)`` and every unchanged sync retries five
-    times before logging a spurious ``HTTPError`` (the worker error in the logs).
-
-    The 304 fast-path is only safe when *every* 200 response is fully persisted,
-    so a later 304 ("unchanged") still describes what's in the DB. Callers that
-    may skip rows from a corp-wide response (e.g. extraction rows whose structure
-    isn't synced yet) must pass ``force_refresh=True``: skipping a row while the
-    ETag is cached as "seen" would otherwise hide that data permanently — every
-    subsequent run gets a 304 and never re-attempts the skipped rows until the
-    server-side body changes.
-    """
+    """Run an ESI .results() call, treating a 304/ETag hit as "no change"."""
     try:
         return operation.results(force_refresh=force_refresh)
     except HTTPNotModified:
         return []
 
 
-def _config():
-    from whatax.models import TaxConfiguration
-
-    return TaxConfiguration.objects.get_solo()
-
-
 def _enabled() -> bool:
-    return _config().is_enabled
+    return get_config().is_enabled
 
 
 def _corp_token(corporation_id: int, scopes):
-    """A valid token for any char in ``corporation_id`` holding ``scopes``."""
+    """A valid token for any char in corporation_id holding scopes."""
     from allianceauth.eveonline.models import EveCharacter
     from esi.models import Token
 
@@ -97,15 +65,7 @@ def _corp_token(corporation_id: int, scopes):
 
 
 def _corps_with_token(scopes):
-    """EVE corp IDs that have a valid token carrying ``scopes``.
-
-    Drives the structure/moon/notification syncs: we only hit a corp's ESI
-    endpoints when a char in that corp has granted the token those reads need.
-    This bootstraps a structures corp the moment its director token is added and,
-    crucially, never tries to read structures from the wallet-only payment corp,
-    whose Accountant token lacks the structures scope (the source of the spurious
-    "no structures token for corp ..." warning).
-    """
+    """EVE corp IDs that have a valid token carrying scopes."""
     from allianceauth.eveonline.models import EveCharacter
     from esi.models import Token
 
@@ -128,15 +88,13 @@ def _corps_with_token(scopes):
 
 # --- ESI sync ---------------------------------------------------------------
 
-# eveuniverse group id for Refinery structures (Athanor, Tatara) — the only
-# structures that drill moons. Used to keep moon refineries while dropping
-# citadels / engineering complexes from the corp structures endpoint.
+# eveuniverse group id for Refinery structures (Athanor, Tatara) that drill moons.
 _REFINERY_GROUP_ID = 1406
 
 
 @shared_task(**_RETRY)
 def sync_structures():
-    """Refresh ``MiningStructure`` rows from the corp structures endpoint (§6.2)."""
+    """Refresh MiningStructure rows from the corp structures endpoint."""
     if not _enabled():
         return
     from allianceauth.eveonline.models import EveCorporationInfo
@@ -146,11 +104,9 @@ def sync_structures():
     with _lock("sync_structures") as ok:
         if not ok:
             return
-        config = _config()
+        config = get_config()
         scope = "esi-corporations.read_structures.v1"
-        # Reconciliation needs the live, complete picture: a 304 would make
-        # _results() return [] and the prune below would wrongly delete every
-        # structure, so the read forces a refresh (§6.3, _results docstring).
+        # Force refresh so a 304 can't make the prune below wipe every structure.
         seen_ids: set[int] = set()
         processed_corps: list[int] = []
         for corp_id in _corps_with_token(scope):
@@ -159,13 +115,7 @@ def sync_structures():
                 logger.warning("whatax: no structures token for corp %s", corp_id)
                 continue
             corp = EveCorporationInfo.objects.filter(corporation_id=corp_id).first()
-            # Keep every moon-drilling refinery (Athanor/Tatara, group 1406) the
-            # corp owns. The structures endpoint also returns citadels and
-            # engineering complexes, so we gate on structure *type* rather than the
-            # mining-observers list: that endpoint only reports structures mined in
-            # the last ~30 days, so idle drills would vanish and the prune below
-            # would delete them — hiding moons that simply weren't mined recently
-            # (the cause of the under-count). Type is the stable, correct gate.
+            # Gate on structure type so idle drills aren't pruned like the observers list would.
             processed_corps.append(corp_id)
             rows = _results(
                 providers.esi.client.Corporation.GetCorporationsCorporationIdStructures(
@@ -178,9 +128,7 @@ def sync_structures():
                 if eve_type is None or eve_type.eve_group_id != _REFINERY_GROUP_ID:
                     continue
                 system = _eve_system(getattr(row, "system_id", None))
-                # Out-of-scope sec class (e.g. low/null when only HS is taxed):
-                # don't track at all — the prune below drops any that slipped in
-                # before, since it isn't added to seen_ids.
+                # Skip out-of-scope sec class; the prune drops any tracked before.
                 if is_sec_class_excluded(system, config):
                     continue
                 MiningStructure.objects.update_or_create(
@@ -194,9 +142,7 @@ def sync_structures():
                     },
                 )
                 seen_ids.add(row.structure_id)
-        # Drop structures the corp no longer owns as refineries (incl. non-refinery
-        # rows left by earlier syncs). Scoped to corps we actually reconciled this
-        # run, so a corp whose token is missing keeps its structures untouched.
+        # Drop structures no longer owned as refineries, scoped to corps reconciled this run.
         MiningStructure.objects.filter(
             corporation__corporation_id__in=processed_corps
         ).exclude(structure_id__in=seen_ids).delete()
@@ -204,7 +150,7 @@ def sync_structures():
 
 @shared_task(**_RETRY)
 def sync_mining_ledger():
-    """Fan out one ledger-sync subtask per active structure (§6.3 fan-out)."""
+    """Fan out one ledger-sync subtask per active structure."""
     if not _enabled():
         return
     from whatax.models import MiningStructure
@@ -225,15 +171,8 @@ def sync_structure_ledger(structure_pk: int):
     if token is None:
         logger.warning("whatax: no mining token for structure %s", structure)
         return
-    # force_refresh: django-esi caches the ETag under the *path template*
-    # (/corporation/{corporation_id}/mining/observers/{observer_id}), not the
-    # resolved observer_id, so every structure in this per-observer fan-out
-    # collides on one shared cache entry. The first structure synced stores an
-    # ETag and every later structure gets a false 304 -> _results() returns []
-    # -> no rows land, yet last_ledger_sync below still stamps it "done". That
-    # silently hides all but one structure's mining forever (the body rarely
-    # changes for an idle observer). Always reconcile live, like sync_structures
-    # and sync_moon_extractions (§6.3, see _results docstring).
+    # force_refresh: per-observer requests share one ETag cache entry, so a
+    # cached 304 would falsely empty all but the first structure; reconcile live.
     rows = _results(
         providers.esi.client.Industry.GetCorporationCorporationIdMiningObserversObserverId(
             corporation_id=structure.corporation.corporation_id,
@@ -272,9 +211,7 @@ def sync_moon_extractions():
             token = _corp_token(corp_id, scope)
             if token is None:
                 continue
-            # force_refresh: this corp-wide response is upserted row-by-row and
-            # rows whose structure isn't synced yet are skipped, so a cached ETag
-            # can't be trusted to mean "fully persisted" — always reconcile live.
+            # force_refresh: rows with unsynced structures are skipped, so a cached ETag isn't trustworthy.
             rows = _results(
                 providers.esi.client.Industry.GetCorporationCorporationIdMiningExtractions(
                     corporation_id=corp_id, token=token
@@ -296,14 +233,14 @@ def sync_moon_extractions():
                     },
                 )
                 touched[structure.pk] = structure
-            # The schedule changed for these structures; reproject their planned pop.
+            # Schedule changed; reproject planned pop for these structures.
             for structure in touched.values():
                 structure.recompute_planned_pop()
 
 
 @shared_task(**_RETRY)
 def poll_corp_notifications():
-    """Read corp moon notifications and persist pop/composition events (§11)."""
+    """Read corp moon notifications and persist pop/composition events."""
     if not _enabled():
         return
     from whatax.models import MiningStructure, MoonExtraction
@@ -321,13 +258,7 @@ def poll_corp_notifications():
                     character_id=token.character_id, token=token
                 )
             )
-            # Apply in chronological order. ESI returns a rolling window
-            # newest-first, so when a chunk's Started *and* its Fracture/Laser
-            # land in the same poll (e.g. the first poll after the token is
-            # added), iterating as-returned applies the pop before the start —
-            # and _apply_extraction_started then resets the just-popped row back
-            # to ACTIVE, stranding it with a popped_at but status=active. Sorting
-            # by timestamp guarantees Started precedes its pop for every chunk.
+            # Apply oldest-first so a chunk's Started always precedes its pop.
             for note in sorted(notes, key=lambda n: n.timestamp):
                 ntype = getattr(note, "type", None)
                 if ntype == "MoonminingExtractionStarted":
@@ -339,18 +270,7 @@ def poll_corp_notifications():
 
 
 def _claim_notification(note) -> bool:
-    """Record an ESI notification as processed, returning True only the first time.
-
-    ESI replays a rolling window of notifications on every poll, and the same
-    event may even arrive via multiple corp characters' tokens. Persisting the
-    stable ``notification_id`` behind a unique constraint makes this the single
-    chokepoint that turns each event into exactly one apply/notify: a duplicate
-    (or a concurrent double-poll) hits the constraint and returns False instead
-    of re-popping the next extraction and re-pinging Discord (the duplicate
-    moon-pop notification bug). A notification without an id (e.g. a hand-built
-    test stub) is always applied — dedup is a best-effort guard, never a gate
-    that would silently drop real events.
-    """
+    """Record an ESI notification as processed, returning True only the first time."""
     from django.db import IntegrityError, transaction
 
     from whatax.models import ProcessedNotification
@@ -371,7 +291,7 @@ def _claim_notification(note) -> bool:
 
 def _apply_extraction_started(note):
     from whatax.models import ExtractionOre, MiningStructure, MoonExtraction
-    from whatax.notifications import notify_moon_pop  # noqa: F401 (kept local for clarity)
+    from whatax.notifications import notify_moon_pop  # noqa: F401
 
     parsed = moons.parse_extraction_started(note.text)
     structure = MiningStructure.objects.filter(structure_id=parsed["structure_id"]).first()
@@ -382,19 +302,11 @@ def _apply_extraction_started(note):
         "extraction_start_time": note.timestamp,
         "natural_decay_time": parsed["natural_decay_time"],
     }
-    # Belt-and-suspenders against an out-of-order replay (a delayed Started seen
-    # only after its pop was already applied in an earlier poll): never resurrect
-    # a terminal extraction back to ACTIVE. Only (re)assert ACTIVE for a new row
-    # or one still pre-pop; an already popped/dead/cancelled row keeps its status.
-    _TERMINAL = {
-        MoonExtraction.Status.POPPED,
-        MoonExtraction.Status.DEAD,
-        MoonExtraction.Status.CANCELLED,
-    }
+    # Never resurrect a terminal extraction to ACTIVE on an out-of-order replay.
     existing = MoonExtraction.objects.filter(
         structure=structure, chunk_arrival_time=parsed["chunk_arrival_time"]
     ).first()
-    if existing is None or existing.status not in _TERMINAL:
+    if existing is None or existing.status not in MoonExtraction.TERMINAL_STATUSES:
         defaults["status"] = MoonExtraction.Status.ACTIVE
     extraction, _ = MoonExtraction.objects.update_or_create(
         structure=structure,
@@ -412,8 +324,7 @@ def _apply_extraction_started(note):
         )
         if is_good:
             total += volume
-    # No good ore in the chunk => composition effectively unknown for dead-detection;
-    # leave NULL rather than a fabricated 0 denominator that wedges at "popped" (§19).
+    # No good ore => leave NULL (unknown) rather than a 0 denominator that wedges dead-detection.
     extraction.total_good_ore_m3 = total if total > 0 else None
     extraction.save(update_fields=["total_good_ore_m3"])
     structure.recompute_planned_pop()
@@ -427,16 +338,8 @@ def _apply_pop(note):
 
     data = yaml.safe_load(note.text) or {}
     structure_id = data.get("structureID")
-    # A laser-fired / auto-fracture event pops the chunk that has *arrived*, i.e.
-    # the extraction whose chunk_arrival_time is at/before the notification time —
-    # the most recent such arrival. The previous ``order_by("-chunk_arrival_time")``
-    # picked the chunk with the *largest* arrival time, which (whenever a later
-    # cycle is already SCHEDULED, as the corp-extractions sync routinely records)
-    # is a still-future extraction. Popping that future row marked the upcoming
-    # cycle POPPED, so the Staff dashboard showed "none scheduled" for a moon that
-    # in fact had a pop coming (§11/§15.2). Constrain to arrived chunks and take
-    # the latest, falling back to the earliest non-popped row if none has a
-    # recorded arrival yet (composition/notification gaps).
+    # Pop the latest already-arrived chunk, not a still-future scheduled one;
+    # fall back to the earliest non-popped row when none has a recorded arrival.
     candidates = MoonExtraction.objects.filter(
         structure__structure_id=structure_id
     ).exclude(status=MoonExtraction.Status.POPPED)
@@ -451,7 +354,7 @@ def _apply_pop(note):
     extraction.status = MoonExtraction.Status.POPPED
     extraction.popped_at = note.timestamp
     extraction.save(update_fields=["status", "popped_at"])
-    # This pop closed the next-pop row; reproject from whatever's now soonest.
+    # Reproject from whatever's now soonest after this pop.
     extraction.structure.recompute_planned_pop()
     notify_moon_pop(extraction)
 
@@ -464,7 +367,7 @@ def update_moon_status():
     from whatax.models import MoonExtraction
     from whatax.notifications import notify_moon_dead
 
-    config = _config()
+    config = get_config()
     actives = MoonExtraction.objects.exclude(
         status__in=[MoonExtraction.Status.DEAD, MoonExtraction.Status.CANCELLED]
     )
@@ -480,7 +383,7 @@ def sync_wallet_journal():
         return
     from whatax.models import WalletJournalEntry
 
-    config = _config()
+    config = get_config()
     if not config.payment_corporation_id:
         return
     corp_id = config.payment_corporation.corporation_id
@@ -515,7 +418,7 @@ def sync_wallet_journal():
 
 @shared_task(**_RETRY)
 def reconcile_payments():
-    """Match unprocessed wallet inflows to outstanding bills (§10)."""
+    """Match unprocessed wallet inflows to outstanding bills."""
     if not _enabled():
         return
     from whatax.models import Payment
@@ -535,15 +438,7 @@ def reconcile_payments():
 def run_monthly_tax(
     year: int | None = None, month: int | None = None, *, force: bool = False
 ):
-    """Emit the previous month's bills on the 1st (idempotent / self-correcting §13).
-
-    The scheduled beat skips an already-``FINALIZED`` period so it never auto
-    re-emits/re-notifies. An explicit admin re-run passes ``force=True`` to
-    recompute regardless: ``calculate_period`` is idempotent (preserves
-    ``amount_paid``, payment links and staff edits), so this is how an empty or
-    stale finalized period — e.g. one calculated before its mining ledger had
-    synced — gets repaired.
-    """
+    """Emit the previous month's bills on the 1st; idempotent, force=True re-runs a finalized period."""
     if not _enabled():
         return
     from whatax.models import TaxPeriod
@@ -564,7 +459,6 @@ def run_monthly_tax(
             period = TaxPeriod.objects.create(
                 year=year, month=month, period_start=start, period_end=end
             )
-        # One final ledger pass would normally precede calc; assume recent sync.
         tax.calculate_period(period)
         for record in period.tax_records.filter(notified_due_at__isnull=True):
             notify_tax_due(record)
@@ -576,13 +470,7 @@ def run_monthly_tax(
 def _eve_type(type_id):
     if not type_id:
         return None
-    # Load the reprocessing recipe (TYPE_MATERIALS) alongside the type: pricing
-    # values ore by the minerals it refines into (core.pricing), and a type
-    # created without that section has no EveTypeMaterial rows, so calc fails
-    # loud ("no reprocessing materials for ore type …") and rolls back the whole
-    # period. Moon ores in particular are only ever first seen here, so without
-    # this their recipes never load. enabled_sections only fetches on creation,
-    # so this is a one-time ESI cost per new type.
+    # Load TYPE_MATERIALS so ore has a reprocessing recipe for pricing; fetched once on creation.
     obj, _ = EveType.objects.get_or_create_esi(
         id=type_id, enabled_sections=[EveType.Section.TYPE_MATERIALS]
     )

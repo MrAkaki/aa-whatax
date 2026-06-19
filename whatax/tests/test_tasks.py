@@ -1,12 +1,4 @@
-"""Celery task wiring: the bits that broke in prod, pinned so they can't regress.
-
-`sync_structure_ledger` must read the observer ledger with ``force_refresh=True``:
-django-esi caches the ETag under the *path template*, so every structure in the
-per-observer fan-out collides on one cache entry. Without force_refresh the first
-structure stores an ETag and every later one gets a false 304 -> no rows land,
-yet ``last_ledger_sync`` still stamps "done" -> only one structure's mining is
-ever visible (see tasks.sync_structure_ledger / _results docstrings).
-"""
+"""Celery task wiring regressions."""
 
 import datetime as dt
 from unittest import mock
@@ -30,7 +22,7 @@ def _ore_type(type_id=46300, name="Bitumens"):
 
 
 def _ledger_row(character_id, type_id, quantity, last_updated):
-    """A stand-in for an ESI observer-ledger row (attribute access, not dict)."""
+    """Stand-in for an ESI observer-ledger row."""
     row = mock.Mock()
     row.character_id = character_id
     row.type_id = type_id
@@ -54,11 +46,7 @@ class SyncStructureLedgerTest(TestCase):
         self.ore = _ore_type()
 
     def _run(self, rows):
-        """Run the task with ESI mocked to return ``rows``; return the ESI op mock.
-
-        The operation object's ``.results(...)`` is what ``_results`` calls, so we
-        can assert how it was invoked.
-        """
+        """Run the task with ESI mocked to return ``rows``; return the ESI op mock."""
         op = mock.Mock()
         op.results.return_value = rows
         industry = tasks.providers.esi.client.Industry
@@ -71,7 +59,6 @@ class SyncStructureLedgerTest(TestCase):
         return op
 
     def test_reads_ledger_with_force_refresh(self):
-        """Regression: a per-observer 304 must never silently hide a structure."""
         op = self._run([_ledger_row(700001, 46300, 100, dt.date(2026, 5, 13))])
         op.results.assert_called_once_with(force_refresh=True)
 
@@ -89,7 +76,6 @@ class SyncStructureLedgerTest(TestCase):
         self.assertIsNotNone(self.structure.last_ledger_sync)
 
     def test_no_token_skips_without_stamping(self):
-        """Missing token must not stamp last_ledger_sync as a successful sync."""
         with mock.patch.object(tasks, "_enabled", return_value=True), mock.patch.object(
             tasks, "_corp_token", return_value=None
         ):
@@ -100,13 +86,7 @@ class SyncStructureLedgerTest(TestCase):
 
 
 class ApplyExtractionStartedTest(TestCase):
-    """_apply_extraction_started must not resurrect an already-popped chunk.
-
-    Pins the prod bug where a chunk's Started notification, replayed/applied
-    after its Fracture, reset the popped extraction back to ACTIVE — stranding it
-    with a popped_at but status=active (see poll_corp_notifications ordering and
-    the terminal-status guard in _apply_extraction_started).
-    """
+    """_apply_extraction_started must not resurrect an already-popped chunk."""
 
     def setUp(self):
         from whatax.models import MoonExtraction

@@ -1,4 +1,4 @@
-"""URL routing (TECHNICAL.md §15.4). Mounted under ^whatax/ by auth_hooks."""
+"""URL routing. Mounted under ^whatax/ by auth_hooks."""
 
 from django.urls import path
 
