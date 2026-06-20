@@ -73,14 +73,14 @@ never overlap — so it's safe to schedule them generously.
 | `whatax.tasks.sync_mining_ledger` | every 1–3 h | Land mining-observer ledger rows. |
 | `whatax.tasks.sync_moon_extractions` | hourly | Refresh the moon extraction schedule. |
 | `whatax.tasks.poll_corp_notifications` | every 15–30 min | Catch moon pop / fracture events. |
-| `whatax.tasks.update_moon_status` | hourly | Recompute moon "dead" percentage. |
-| `whatax.tasks.sync_wallet_journal` | every 30–60 min | Land payment-wallet journal rows. |
-| `whatax.tasks.reconcile_payments` | every 30–60 min | Match wallet inflows to bills. |
+| `whatax.tasks.sweep_structure_health` | hourly | Recompute moon dead % + DM staff on low fuel / off-schedule pops. |
+| `whatax.tasks.sync_and_reconcile_payments` | every 30–60 min | Land payment-wallet journal rows, then match inflows to bills. |
 | `whatax.tasks.run_monthly_tax` | **1st of month, 00:30** | Emit the previous month's bills + notify. |
 
-> Schedule `reconcile_payments` to run shortly **after** `sync_wallet_journal`
-> so freshly-landed inflows get matched in the same cycle. Do **not** schedule
-> `whatax.tasks.sync_structure_ledger` — `sync_mining_ledger` fans it out per structure.
+> `sync_and_reconcile_payments` lands the wallet journal and matches inflows
+> back-to-back in one run, so fresh inflows are always reconciled in the same
+> cycle. Do **not** schedule `whatax.tasks.sync_structure_ledger` —
+> `sync_mining_ledger` fans it out per structure.
 
 Example for `local.py`:
 
@@ -104,17 +104,13 @@ CELERYBEAT_SCHEDULE.update({
         "task": "whatax.tasks.poll_corp_notifications",
         "schedule": crontab(minute="*/15"),               # every 15 min
     },
-    "whatax_update_moon_status": {
-        "task": "whatax.tasks.update_moon_status",
+    "whatax_sweep_structure_health": {
+        "task": "whatax.tasks.sweep_structure_health",
         "schedule": crontab(minute=20),                   # hourly
     },
-    "whatax_sync_wallet_journal": {
-        "task": "whatax.tasks.sync_wallet_journal",
+    "whatax_sync_and_reconcile_payments": {
+        "task": "whatax.tasks.sync_and_reconcile_payments",
         "schedule": crontab(minute="0,30"),               # every 30 min
-    },
-    "whatax_reconcile_payments": {
-        "task": "whatax.tasks.reconcile_payments",
-        "schedule": crontab(minute="10,40"),              # 30 min, just after journal sync
     },
     "whatax_run_monthly_tax": {
         "task": "whatax.tasks.run_monthly_tax",
@@ -127,6 +123,31 @@ The monthly run bills the **previous** month and is self-correcting: it no-ops i
 that period is already finalized, so a missed 1st can be re-run manually any later
 day and still emits exactly once. See
 [TECHNICAL.md §13](TECHNICAL.md#13-scheduled-tasks-celery-beat) for the rationale.
+
+### Structure staff alerts
+
+`sweep_structure_health` DMs everyone holding `whatax.view_structures` or
+`whatax.manage_payments` (staff + structure viewers) about two conditions:
+
+**Low fuel** — a reminder whose cadence escalates with severity:
+
+- below **"fuel warning days"** (default 7): a reminder **once a day**;
+- at or below **"fuel critical days"** (default 2): a reminder **every 6 hours**.
+
+Both thresholds live in the **Admin tab**. Reminders stop and re-arm automatically
+once the structure is refueled.
+
+**Off-schedule pop** — a **single** DM the first time a newly-scheduled pop drifts
+off the structure's standing `planned_pop_at` (the same condition the structures
+page flags). It clears and re-arms once the schedule realigns or staff accept the
+new cadence.
+
+Run `sweep_structure_health` **hourly** so the 6-hour fuel step is honored. Going faster than the
+ESI sync that feeds it (`sync_moon_extractions`, hourly; `sync_structures`, daily)
+won't surface anything sooner — the freshest a drift alert can fire is one
+`sync_moon_extractions` cycle after the new pop lands. Delivery uses
+[`aadiscordbot`](https://github.com/pvyParts/allianceauth-discordbot): install and
+run the bot for DMs to land — without it the alerts degrade to a logged no-op.
 
 ## License
 

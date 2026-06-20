@@ -209,6 +209,8 @@ correct.
 | `mineral_price_basis` | Char choices | Which Janice figure values minerals: `split/buy/sell` × `immediate/top5` (default `split_immediate`). **Edited in the Admin tab**; recorded on each snapshot. |
 | `grace_period_days` | PositiveSmallInt | Pay-by window: `due_date = emitted_at + grace_period_days`; a record past it with balance owed becomes `overdue`. |
 | `tax_edit_window_days` | PositiveSmallInt | Days after `emitted_at` during which **staff** may edit a bill's `tax_due` (default `15`, [§5.4](#54-payments) `TaxRecordEdit`). |
+| `fuel_warning_days` | PositiveSmallInt | Below this many days of fuel, `sweep_structure_health` DMs staff **daily** (default `7`, [§13](#13-scheduled-tasks-celery-beat)). |
+| `fuel_critical_days` | PositiveSmallInt | At/below this many days, the low-fuel DM escalates to **every 6h** (default `2`). |
 | `exclude_highsec` | Bool | Exclude all high-sec (≥0.5) mining from tax. |
 | `exclude_lowsec` | Bool | Exclude all low-sec (0.1–0.45) mining from tax. |
 | `exclude_nullsec` | Bool | Exclude all null-sec (≤0.0) mining from tax. |
@@ -678,9 +680,9 @@ are set once at first emission and not moved by re-runs.
 ## 10. Payment Matching
 
 ```
-[sync_wallet_journal] ──► WalletJournalEntry (raw, upsert on entry_id)
-        │
-[reconcile_payments] ──► Payment (+ TaxRecord.amount_paid / status)
+[sync_and_reconcile_payments]
+        ├─► WalletJournalEntry (raw, upsert on entry_id)
+        └─► Payment (+ TaxRecord.amount_paid / status)
 ```
 
 **Source:** the journal of `TaxConfiguration.payment_corporation`, division
@@ -761,11 +763,11 @@ counting **only** ores in the structure's effective good-ore set (the global
   is left NULL and dead-detection skips (never a fabricated `0`).
 - **Numerator** (`mined_good_ore_m3`): for ledger rows on this structure for
   good ores **since `chunk_arrival_time`**, sum `quantity × EveType.volume`
-  (per-unit m³ from `django-eveuniverse`). Recomputed by `update_moon_status`.
+  (per-unit m³ from `django-eveuniverse`). Recomputed by `sweep_structure_health`.
 
 Caveat to keep honest: the observer ledger is daily/cumulative and ~30 days
 deep, so the numerator tracks *mined* volume accurately but isn't real-time; the
-`update_moon_status` cadence ([§13](#13-scheduled-tasks-celery-beat)) bounds how
+`sweep_structure_health` cadence ([§13](#13-scheduled-tasks-celery-beat)) bounds how
 stale "dead" can be. This is a freshness limit, not the old denominator-estimation
 risk — that one is now resolved.
 
@@ -783,7 +785,7 @@ re-pings).
 | Event | Trigger | Channel(s) | Recipient |
 |---|---|---|---|
 | Tax due | period `finalized` | webhook + opt-in DM | player |
-| Payment received | `reconcile_payments` match | webhook + opt-in DM | player |
+| Payment received | `sync_and_reconcile_payments` match | webhook + opt-in DM | player |
 | Moon pop | fracture notification | webhook | configured channel |
 | Moon dead | ≥95% good ore | webhook | configured channel |
 
@@ -811,9 +813,8 @@ manage via `django-celery-beat` admin.
 | `whatax.sync_mining_ledger` | every 1–3h | Land observer ledger rows. |
 | `whatax.sync_moon_extractions` | hourly | Extraction schedule. |
 | `whatax.poll_corp_notifications` | every 15–30 min | Moon pop/fracture events. |
-| `whatax.update_moon_status` | hourly | Recompute dead %. |
-| `whatax.sync_wallet_journal` | every 30–60 min | Land wallet rows. |
-| `whatax.reconcile_payments` | every 30–60 min | Match payments. |
+| `whatax.sweep_structure_health` | hourly | Recompute dead % + DM staff on low fuel / off-schedule pops. |
+| `whatax.sync_and_reconcile_payments` | every 30–60 min | Land wallet rows, then match payments. |
 | `whatax.run_monthly_tax` | **1st of month, ~00:30** | Emit previous month's bills + notify. |
 
 **The monthly trigger — decided: 1st of the month for the previous month.**
@@ -828,6 +829,21 @@ still emits exactly once.)
 All scheduled tasks must short-circuit when `TaxConfiguration.is_enabled` is
 False, and acquire a lock (Django cache lock / Celery `singleton`) to prevent
 overlapping runs of the same sync.
+
+**`sweep_structure_health` — staff DMs via `aadiscordbot`.** One hourly pass recomputes
+dead % for all non-terminal extractions (notifying on transition), then sweeps
+active structures for two staff-facing alerts, DM'd to every holder of
+`view_structures` or `manage_payments` (delivery degrades to a logged no-op if
+`aadiscordbot` isn't installed). *Low fuel:* a reminder whose cadence is derived
+from `fuel_days_left` — daily under `fuel_warning_days`, every 6h at/below
+`fuel_critical_days` — gated by `MiningStructure.notified_low_fuel_at` (the last
+send time) and cleared on refuel. *Off-schedule pop:* a **single** DM the first
+time `MiningStructure.is_off_schedule()` turns true (the same condition the
+structures **warning panel** shows), gated by `notified_drift_at` and cleared when
+the schedule realigns or staff accept the new cadence. Run it hourly: the 6h fuel
+step needs sub-6h granularity, but going faster than the feeding syncs
+(`sync_moon_extractions` hourly, `sync_structures` daily) surfaces nothing sooner —
+a drift can only be seen one `sync_moon_extractions` cycle after the new pop lands.
 
 ---
 

@@ -1,5 +1,6 @@
 """Notification dispatch: broadcast webhook + opt-in Discord DM, idempotent per record."""
 
+import datetime as dt
 import logging
 
 from whatax.core.config import get_config
@@ -42,6 +43,39 @@ def _send_dm(user, message: str) -> bool:
     except Exception:  # noqa: BLE001 - DM is best-effort; webhook is the guarantee
         logger.info("whatax: DM to user %s not delivered (service/opt-in unavailable)", user)
         return False
+
+
+def _staff_recipients():
+    """Users holding the structures-view or payments-staff permission (incl. groups/superusers)."""
+    from django.contrib.auth.models import Permission, User
+    from app_utils.django import users_with_permission
+
+    perms = Permission.objects.filter(
+        content_type__app_label="whatax",
+        codename__in=["view_structures", "manage_payments"],
+    )
+    users = User.objects.none()
+    for perm in perms:
+        users = users | users_with_permission(perm)
+    return users.distinct()
+
+
+def _dm_staff(message: str) -> bool:
+    """DM every staff member / structure-viewer via aadiscordbot; no-op if it's unavailable."""
+    try:
+        from aadiscordbot.tasks import send_message
+    except Exception:  # noqa: BLE001 - aadiscordbot is optional
+        logger.info("whatax: aadiscordbot unavailable; skipping staff DM")
+        return False
+    sent = False
+    for user in _staff_recipients():
+        try:
+            # send_message resolves the user's Discord link and enqueues to the bot.
+            send_message(user=user, message=message)
+            sent = True
+        except Exception:  # noqa: BLE001 - one bad recipient mustn't break the rest
+            logger.info("whatax: staff DM to %s not delivered", user)
+    return sent
 
 
 def _embed(title, description, *, color=0x1F8B4C, fields=None):
@@ -142,6 +176,73 @@ def notify_moon_pop(extraction) -> bool:
     _send_webhook(embed=_embed("Whale Tax — Moon Pop", description, color=0x9B59B6))
     extraction.notified_pop_at = eve_now()
     extraction.save(update_fields=["notified_pop_at"])
+    return True
+
+
+# Low-fuel reminder cadence: daily under the warning threshold, escalating to
+# every 6h once a structure is at/below the critical threshold.
+_FUEL_REMINDER_DAILY = dt.timedelta(hours=24)
+_FUEL_REMINDER_CRITICAL = dt.timedelta(hours=6)
+
+
+def reconcile_low_fuel(structure, config) -> bool:
+    """Send a low-fuel DM on the right cadence, or re-arm the structure on refuel."""
+    days = structure.fuel_days_left
+    if days is None or days >= config.fuel_warning_days:
+        # Refueled or fuel reading lost: clear so the next drain re-alerts.
+        if structure.notified_low_fuel_at is not None:
+            structure.notified_low_fuel_at = None
+            structure.save(update_fields=["notified_low_fuel_at"])
+        return False
+    interval = (
+        _FUEL_REMINDER_CRITICAL if days <= config.fuel_critical_days else _FUEL_REMINDER_DAILY
+    )
+    last = structure.notified_low_fuel_at
+    if last is not None and eve_now() - last < interval:
+        return False
+    return notify_structure_low_fuel(structure)
+
+
+def notify_structure_low_fuel(structure) -> bool:
+    """DM staff that a structure is low on fuel and stamp the reminder time.
+
+    Sends unconditionally — the cadence (daily, or 6-hourly when critical) is
+    decided by ``reconcile_low_fuel``; this stamps ``notified_low_fuel_at`` so the
+    next reminder is spaced correctly.
+    """
+    days = structure.fuel_days_left
+    expires = f"{structure.fuel_expires:%Y-%m-%d %H:%M} EVE" if structure.fuel_expires else "—"
+    system = structure.eve_solar_system or "—"
+    message = (
+        f"⛽ **Low fuel** — **{structure}** ({system}) has **{days} day(s)** of fuel "
+        f"left (runs out {expires}). Top it off before the drill goes offline."
+    )
+    _dm_staff(message)
+    structure.notified_low_fuel_at = eve_now()
+    structure.save(update_fields=["notified_low_fuel_at"])
+    return True
+
+
+def reconcile_pop_drift(structure) -> bool:
+    """DM staff once when a structure's next pop drifts off schedule; clear when realigned."""
+    if not structure.is_off_schedule():
+        if structure.notified_drift_at is not None:
+            structure.notified_drift_at = None
+            structure.save(update_fields=["notified_drift_at"])
+        return False
+    if structure.notified_drift_at is not None:
+        return False  # already alerted for this drift episode
+    next_pop = structure.next_scheduled_pop()
+    planned = structure.planned_pop_at
+    system = structure.eve_solar_system or "—"
+    message = (
+        f"⚠️ **Off-schedule pop** — **{structure}** ({system}) — a new pop is set for "
+        f"**{next_pop:%Y-%m-%d %H:%M} EVE**, off the planned **{planned:%Y-%m-%d} EVE** "
+        f"schedule. Review it on the structures page and accept the new cadence if intended."
+    )
+    _dm_staff(message)
+    structure.notified_drift_at = eve_now()
+    structure.save(update_fields=["notified_drift_at"])
     return True
 
 

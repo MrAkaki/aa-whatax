@@ -124,3 +124,80 @@ class ApplyExtractionStartedTest(TestCase):
         self.popped.refresh_from_db()
         self.assertEqual(self.popped.status, MoonExtraction.Status.POPPED)
         self.assertEqual(MoonExtraction.objects.count(), 1)  # matched, not duplicated
+
+
+class PollNotificationsClaimOrderTest(TestCase):
+    """Claim must happen AFTER apply so a transient apply failure is retried."""
+
+    def setUp(self):
+        self.corp = EveCorporationInfo.objects.create(
+            corporation_id=98000001,
+            corporation_name="TestCorp",
+            corporation_ticker="TC",
+            member_count=1,
+        )
+        self.structure = MiningStructure.objects.create(
+            structure_id=200, corporation=self.corp, name="Test Moon Drill"
+        )
+        self.ore = _ore_type(type_id=46300, name="Bitumens")
+        self.arrival = dt.datetime(2026, 7, 1, 6, 0, 0, tzinfo=dt.timezone.utc)
+
+    def _started_note(self):
+        ticks = int((self.arrival.timestamp() + 11644473600) * 10_000_000)
+        note = mock.Mock()
+        note.notification_id = 9990001
+        note.type = "MoonminingExtractionStarted"
+        note.timestamp = self.arrival
+        note.text = (
+            f"readyTime: {ticks}\n"
+            f"structureID: {self.structure.structure_id}\n"
+            "oreVolumeByType:\n"
+            f"  {self.ore.id}: 5000.0\n"
+        )
+        return note
+
+    def _run_poll(self, notes):
+        """Drive poll_corp_notifications with _results mocked to return ``notes``.
+
+        Bypasses ESI entirely: _results is stubbed so no token/network calls happen.
+        _eve_type and _eve_moon are also stubbed so apply never hits ESI helpers.
+        """
+        with mock.patch.object(tasks, "_enabled", return_value=True), mock.patch.object(
+            tasks, "_corps_with_token", return_value=[self.corp.corporation_id]
+        ), mock.patch.object(tasks, "_corp_token", return_value=mock.Mock()), mock.patch.object(
+            tasks, "_results", return_value=notes
+        ), mock.patch.object(tasks, "_eve_type", return_value=self.ore), mock.patch.object(
+            tasks, "_eve_moon", return_value=None
+        ):
+            tasks.poll_corp_notifications()
+
+    def test_apply_failure_leaves_notification_unclaimed(self):
+        """When apply raises, the notification must NOT be marked processed."""
+        from whatax.models import ProcessedNotification
+
+        note = self._started_note()
+        with mock.patch.object(
+            tasks, "_apply_extraction_started", side_effect=Exception("esi down")
+        ):
+            with self.assertRaises(Exception):
+                self._run_poll([note])
+        self.assertEqual(ProcessedNotification.objects.count(), 0)
+
+    def test_retry_after_failure_applies_and_claims(self):
+        """After a failed first attempt, a retry must apply fully and claim the note."""
+        from whatax.models import ExtractionOre, ProcessedNotification
+
+        note = self._started_note()
+        # First attempt: apply raises — notification must NOT be claimed.
+        with mock.patch.object(
+            tasks, "_apply_extraction_started", side_effect=Exception("esi down")
+        ):
+            with self.assertRaises(Exception):
+                self._run_poll([note])
+        self.assertEqual(ProcessedNotification.objects.count(), 0, "must not be claimed after failure")
+
+        # Second attempt (retry): apply succeeds — note must be claimed and ore created.
+        self._run_poll([note])
+
+        self.assertEqual(ProcessedNotification.objects.count(), 1, "must be claimed after success")
+        self.assertGreater(ExtractionOre.objects.count(), 0, "ore rows must be created")

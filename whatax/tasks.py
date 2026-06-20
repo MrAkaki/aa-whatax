@@ -259,14 +259,29 @@ def poll_corp_notifications():
                 )
             )
             # Apply oldest-first so a chunk's Started always precedes its pop.
+            # Apply BEFORE claim: if apply raises (transient ESI error), the task
+            # retries and re-applies rather than skipping permanently.  Apply is
+            # idempotent (update_or_create), so re-running on retry is harmless.
             for note in sorted(notes, key=lambda n: n.timestamp):
                 ntype = getattr(note, "type", None)
                 if ntype == "MoonminingExtractionStarted":
-                    if _claim_notification(note):
+                    if not _already_processed(note):
                         _apply_extraction_started(note)
+                        _claim_notification(note)
                 elif ntype in ("MoonminingLaserFired", "MoonminingAutomaticFracture"):
-                    if _claim_notification(note):
+                    if not _already_processed(note):
                         _apply_pop(note)
+                        _claim_notification(note)
+
+
+def _already_processed(note) -> bool:
+    """True if this notification was already handled (non-consuming check)."""
+    from whatax.models import ProcessedNotification
+
+    notification_id = getattr(note, "notification_id", None)
+    if notification_id is None:
+        return False
+    return ProcessedNotification.objects.filter(notification_id=notification_id).exists()
 
 
 def _claim_notification(note) -> bool:
@@ -360,73 +375,84 @@ def _apply_pop(note):
 
 
 @shared_task(**_RETRY)
-def update_moon_status():
-    """Recompute dead % for active/popped extractions and notify on transition."""
+def sweep_structure_health():
+    """One hourly health pass: recompute dead % + DM staff on low fuel / off-schedule drift.
+
+    Recomputes moon dead status for all non-terminal extractions and notifies on
+    transition, then sweeps active structures for low-fuel and pop-drift conditions,
+    all under one lock so both steps run atomically in the same cycle.
+    """
     if not _enabled():
         return
-    from whatax.models import MoonExtraction
-    from whatax.notifications import notify_moon_dead
+    from whatax.models import MiningStructure, MoonExtraction
+    from whatax.notifications import notify_moon_dead, reconcile_low_fuel, reconcile_pop_drift
 
     config = get_config()
-    actives = MoonExtraction.objects.exclude(
-        status__in=[MoonExtraction.Status.DEAD, MoonExtraction.Status.CANCELLED]
-    )
-    for extraction in actives:
-        if moons.recompute_dead(extraction):
-            notify_moon_dead(extraction)
-
-
-@shared_task(**_RETRY)
-def sync_wallet_journal():
-    """Land corp wallet journal rows for the configured division (upsert on id)."""
-    if not _enabled():
-        return
-    from whatax.models import WalletJournalEntry
-
-    config = get_config()
-    if not config.payment_corporation_id:
-        return
-    corp_id = config.payment_corporation.corporation_id
-    division = config.payment_wallet_division
-    token = _corp_token(corp_id, "esi-wallet.read_corporation_wallets.v1")
-    if token is None:
-        logger.warning("whatax: no wallet token for corp %s", corp_id)
-        return
-    with _lock("sync_wallet_journal") as ok:
+    with _lock("sweep_structure_health") as ok:
         if not ok:
             return
-        rows = _results(
-            providers.esi.client.Wallet.GetCorporationsCorporationIdWalletsDivisionJournal(
-                corporation_id=corp_id, division=division, token=token
-            )
+
+        # 1. Recompute dead % for non-terminal extractions and notify on transition.
+        actives = MoonExtraction.objects.exclude(
+            status__in=[MoonExtraction.Status.DEAD, MoonExtraction.Status.CANCELLED]
         )
-        for row in rows:
-            WalletJournalEntry.objects.update_or_create(
-                entry_id=row.id,
-                defaults={
-                    "division": division,
-                    "ref_type": getattr(row, "ref_type", "") or "",
-                    "amount": getattr(row, "amount", None) or 0,
-                    "balance": getattr(row, "balance", None),
-                    "date": row.date,
-                    "first_party_id": getattr(row, "first_party_id", None),
-                    "second_party_id": getattr(row, "second_party_id", None),
-                    "reason": getattr(row, "reason", "") or "",
-                },
-            )
+        for extraction in actives:
+            if moons.recompute_dead(extraction):
+                notify_moon_dead(extraction)
+
+        # 2. Sweep active structures for low-fuel reminders and off-schedule pop alerts.
+        for structure in MiningStructure.objects.active().select_related("group", "eve_solar_system"):
+            reconcile_low_fuel(structure, config)
+            reconcile_pop_drift(structure)
 
 
 @shared_task(**_RETRY)
-def reconcile_payments():
-    """Match unprocessed wallet inflows to outstanding bills."""
+def sync_and_reconcile_payments():
+    """Land corp wallet journal rows, then match fresh inflows to outstanding bills.
+
+    The wallet-journal sync and payment reconciliation run back-to-back under one
+    lock so freshly-landed inflows are matched in the same cycle, with no
+    cross-task scheduling to keep in sync.
+    """
     if not _enabled():
         return
-    from whatax.models import Payment
+    from whatax.models import Payment, WalletJournalEntry
     from whatax.notifications import notify_payment_received
 
-    with _lock("reconcile_payments") as ok:
+    config = get_config()
+    with _lock("sync_and_reconcile_payments") as ok:
         if not ok:
             return
+
+        # 1. Land the corp wallet journal for the configured division (upsert on id).
+        if config.payment_corporation_id:
+            corp_id = config.payment_corporation.corporation_id
+            division = config.payment_wallet_division
+            token = _corp_token(corp_id, "esi-wallet.read_corporation_wallets.v1")
+            if token is None:
+                logger.warning("whatax: no wallet token for corp %s", corp_id)
+            else:
+                rows = _results(
+                    providers.esi.client.Wallet.GetCorporationsCorporationIdWalletsDivisionJournal(
+                        corporation_id=corp_id, division=division, token=token
+                    )
+                )
+                for row in rows:
+                    WalletJournalEntry.objects.update_or_create(
+                        entry_id=row.id,
+                        defaults={
+                            "division": division,
+                            "ref_type": getattr(row, "ref_type", "") or "",
+                            "amount": getattr(row, "amount", None) or 0,
+                            "balance": getattr(row, "balance", None),
+                            "date": row.date,
+                            "first_party_id": getattr(row, "first_party_id", None),
+                            "second_party_id": getattr(row, "second_party_id", None),
+                            "reason": getattr(row, "reason", "") or "",
+                        },
+                    )
+
+        # 2. Match unprocessed inflows to outstanding bills and notify payers.
         matching.reconcile_payments()
         for payment in Payment.objects.filter(notified_at__isnull=True).exclude(
             tax_record__isnull=True

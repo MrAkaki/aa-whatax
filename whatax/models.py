@@ -83,6 +83,12 @@ class TaxConfiguration(models.Model):
     tax_edit_window_days = models.PositiveSmallIntegerField(
         default=15, help_text=_("Days after emission during which staff may edit tax_due.")
     )
+    fuel_warning_days = models.PositiveSmallIntegerField(
+        default=7, help_text=_("DM staff daily once a structure drops below this many days of fuel.")
+    )
+    fuel_critical_days = models.PositiveSmallIntegerField(
+        default=2, help_text=_("At or below this many days, escalate the low-fuel DM to every 6h.")
+    )
     exclude_highsec = models.BooleanField(default=False)
     exclude_lowsec = models.BooleanField(default=False)
     exclude_nullsec = models.BooleanField(default=False)
@@ -175,6 +181,16 @@ class MiningStructure(models.Model):
         blank=True,
         help_text=_("ESI-reported moment fuel runs out; None when unknown."),
     )
+    notified_low_fuel_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=_("Last low-fuel DM time; drives the reminder cadence, cleared on refuel."),
+    )
+    notified_drift_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=_("Set when an off-schedule DM went out; cleared when the pop realigns."),
+    )
 
     objects = MiningStructureManager()
 
@@ -189,15 +205,27 @@ class MiningStructure(models.Model):
         delta = self.fuel_expires - eve_now()
         return max(0, delta.days)  # floor; 0 means <1 day left
 
+    def next_scheduled_pop(self):
+        """Soonest future, non-terminal chunk arrival for this drill, or None."""
+        return (
+            self.extractions.filter(chunk_arrival_time__gte=eve_now())
+            .exclude(status__in=MoonExtraction.TERMINAL_STATUSES)
+            .aggregate(models.Min("chunk_arrival_time"))["chunk_arrival_time__min"]
+        )
+
+    def is_off_schedule(self):
+        """True when the next actual pop drifts off the standing ``planned_pop_at`` projection."""
+        if self.group_id is None or self.planned_pop_at is None:
+            return False
+        next_pop = self.next_scheduled_pop()
+        if next_pop is None:
+            return False
+        expected = next_pop + dt.timedelta(days=self.group.schedule_interval_days)
+        return expected.date() != self.planned_pop_at.date()
+
     def recompute_planned_pop(self, *, accept: bool = False, save: bool = True):
         """Refresh sticky ``planned_pop_at`` from the live next pop + group cadence."""
-        next_pop = None
-        if self.group_id is not None:
-            next_pop = (
-                self.extractions.filter(chunk_arrival_time__gte=eve_now())
-                .exclude(status__in=MoonExtraction.TERMINAL_STATUSES)
-                .aggregate(models.Min("chunk_arrival_time"))["chunk_arrival_time__min"]
-            )
+        next_pop = self.next_scheduled_pop() if self.group_id is not None else None
         if self.group_id is None:
             planned = None
         elif next_pop is None:
