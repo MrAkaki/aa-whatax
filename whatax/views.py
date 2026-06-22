@@ -759,6 +759,25 @@ def run_calc(request):
 
 @admin_required
 @require_POST
+def period_delete(request):
+    """Delete a period and all its snapshots/records (admin). Blocked if any payments exist."""
+    year = int(request.POST["year"])
+    month = int(request.POST["month"])
+    period = get_object_or_404(TaxPeriod, year=year, month=month)
+    if period.tax_records.filter(amount_paid__gt=0).exists():
+        messages.error(
+            request,
+            f"Cannot delete {period}: one or more records have payments recorded. "
+            "Remove payments first.",
+        )
+        return redirect("whatax:admin")
+    period.delete()
+    messages.success(request, f"Period {period} and all its records/snapshots deleted.")
+    return redirect("whatax:admin")
+
+
+@admin_required
+@require_POST
 def corp_rate_delete(request, rate_id):
     """Remove a per-corporation tax override (admin)."""
     rate = get_object_or_404(CorporationTaxRate, pk=rate_id)

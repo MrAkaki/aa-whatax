@@ -160,6 +160,15 @@
       <div class="col-auto"><button class="btn btn-danger">{% translate "Run / re-run calc" %}</button></div>
     </form>
     <p class="small text-muted mt-2">{% translate "Re-running is idempotent: it preserves payments and staff edits." %}</p>
+    <hr>
+    <form method="post" action="{% url 'whatax:period_delete' %}" class="row g-2"
+          onsubmit="return confirm('{% translate "Delete this period and ALL its records/snapshots? This cannot be undone." %}')">
+      {% csrf_token %}
+      <div class="col-auto"><input type="number" name="year" class="form-control" placeholder="{% translate 'Year' %}"></div>
+      <div class="col-auto"><input type="number" name="month" class="form-control" placeholder="{% translate 'Month' %}"></div>
+      <div class="col-auto"><button class="btn btn-outline-danger">{% translate "Delete period" %}</button></div>
+    </form>
+    <p class="small text-muted mt-2">{% translate "Deletes the period and all snapshots/records. Blocked if any payments exist." %}</p>
   </div>
 </div>
 {% endblock %}
