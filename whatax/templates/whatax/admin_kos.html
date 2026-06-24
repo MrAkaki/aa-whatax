@@ -1,0 +1,56 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+
+{% block whatax_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="fas fa-skull-crossbones"></i> {% translate "Kill on sight" %}</h5>
+  <a href="{% url 'whatax:admin' %}" class="btn btn-outline-secondary btn-sm">
+    <i class="fas fa-arrow-left"></i> {% translate "Back to admin" %}
+  </a>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">{% translate "Add character" %}</div>
+  <div class="card-body">
+    <p class="small text-muted mb-2">
+      {% translate "Type an EVE character name; it is resolved against ESI when added." %}
+    </p>
+    <form method="post" class="row g-2 align-items-end">
+      {% csrf_token %}
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Character name" %}</label>
+        {{ kos_form.character_name }}
+      </div>
+      <div class="col-auto">
+        <label class="form-label small mb-0">{% translate "Reason" %}</label>
+        {{ kos_form.reason }}
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-primary btn-sm">{% translate "Add to KOS" %}</button>
+      </div>
+    </form>
+    {% if kos_form.errors %}<div class="text-danger small mt-2">{{ kos_form.errors }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">{% translate "Current KOS list" %}</div>
+  <div class="card-body">
+    <ul class="list-unstyled mb-0">
+      {% for entry in kos_entries %}
+        <li class="d-flex align-items-center gap-2 mb-1">
+          <img src="https://images.evetech.net/characters/{{ entry.character.id }}/portrait?size=32"
+               alt="" width="24" height="24" class="rounded">
+          <span>{{ entry.character.name }}{% if entry.reason %} — {{ entry.reason }}{% endif %}</span>
+          <form method="post" action="{% url 'whatax:kos_delete' entry.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button class="btn btn-outline-danger btn-sm">{% translate "Remove" %}</button>
+          </form>
+        </li>
+      {% empty %}
+        <li class="text-muted">{% translate "No characters on the KOS list yet." %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}

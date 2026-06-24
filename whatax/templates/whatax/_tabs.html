@@ -15,6 +15,13 @@
       </a>
     </li>
   {% endif %}
+  {% if perms.whatax.basic_access or perms.whatax.view_structures or perms.whatax.manage_payments or perms.whatax.admin_access %}
+    <li class="nav-item">
+      <a class="nav-link {% if active_tab == 'characters' %}active{% endif %}" href="{% url 'whatax:characters' %}">
+        {% translate "Characters" %}
+      </a>
+    </li>
+  {% endif %}
   {% if perms.whatax.manage_payments %}
     <li class="nav-item">
       <a class="nav-link {% if active_tab == 'staff' %}active{% endif %}" href="{% url 'whatax:staff' %}">

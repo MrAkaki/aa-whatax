@@ -11,6 +11,8 @@ urlpatterns = [
     path("", views.index, name="index"),
     # Structures (read-only drill pop schedule & warnings)
     path("structures/", views.structures, name="structures"),
+    # Characters (any whatax role): allowed roster + KOS list
+    path("characters/", views.characters, name="characters"),
     # Staff
     path("staff/", views.staff, name="staff"),
     path("staff/outstanding/", views.staff_outstanding, name="staff_outstanding"),
@@ -57,6 +59,8 @@ urlpatterns = [
         views.structure_good_ore_delete,
         name="structure_good_ore_delete",
     ),
+    path("admin/kos/", views.admin_kos, name="admin_kos"),
+    path("admin/kos/<int:kos_id>/delete/", views.kos_delete, name="kos_delete"),
     path("admin/groups/", views.admin_groups, name="admin_groups"),
     path("admin/groups/<int:group_id>/delete/", views.moon_group_delete, name="moon_group_delete"),
     path(

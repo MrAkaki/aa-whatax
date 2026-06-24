@@ -7,7 +7,7 @@ from allianceauth.eveonline.models import EveCorporationInfo
 from django.contrib.auth.models import User
 from django.db import models
 from django.utils.translation import gettext_lazy as _
-from eveuniverse.models import EveMoon, EveSolarSystem, EveType
+from eveuniverse.models import EveEntity, EveMoon, EveSolarSystem, EveType
 
 from whatax import app_settings
 from whatax.core.timeutils import eve_now
@@ -92,6 +92,14 @@ class TaxConfiguration(models.Model):
     exclude_highsec = models.BooleanField(default=False)
     exclude_lowsec = models.BooleanField(default=False)
     exclude_nullsec = models.BooleanField(default=False)
+    allowed_group = models.ForeignKey(
+        "auth.Group",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text=_("Members of this group are the 'allowed characters' shown on the Characters tab."),
+    )
     is_enabled = models.BooleanField(default=False, help_text=_("Master kill-switch for scheduled work."))
 
     objects = TaxConfigurationManager()
@@ -578,3 +586,18 @@ class ProcessedNotification(models.Model):
 
     def __str__(self):
         return f"{self.notification_type}#{self.notification_id}"
+
+
+class KosCharacter(models.Model):
+    """A character flagged kill-on-sight; added manually by an admin (ESI-resolved)."""
+
+    character = models.OneToOneField(EveEntity, on_delete=models.PROTECT, related_name="+")
+    reason = models.CharField(max_length=255, blank=True)
+    added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["character__name"]
+
+    def __str__(self):
+        return self.character.name

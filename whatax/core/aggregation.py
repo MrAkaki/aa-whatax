@@ -94,6 +94,21 @@ def _player_label(user) -> str:
     return user.username
 
 
+def allowed_character_rows(group) -> list[dict]:
+    """(player, character) rows for every character owned by a member of ``group``."""
+    if group is None:
+        return []
+    ownerships = CharacterOwnership.objects.filter(user__groups=group).select_related(
+        "user__profile__main_character", "character"
+    )
+    rows = [
+        {"player": _player_label(o.user), "character": o.character.character_name}
+        for o in ownerships
+    ]
+    rows.sort(key=lambda r: (r["player"].lower(), r["character"].lower()))
+    return rows
+
+
 def _resolve_entity_name(character_id) -> str:
     """Resolve an unregistered character name via eveuniverse, never crashing."""
     try:

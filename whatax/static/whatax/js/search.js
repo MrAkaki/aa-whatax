@@ -20,17 +20,20 @@
     return row.cells.length === 1 && first && first.colSpan > 1;
   }
 
-  // Column indexes to search: the name columns if the table has any, else [].
-  // An empty list means "match the whole row".
+  // Column indexes to search. Headers explicitly marked with data-search-col
+  // win (search only those); otherwise fall back to the name columns
+  // (NAME_HEADERS). An empty list means "match the whole row".
   function nameColumns(table) {
     if (!table.tHead || !table.tHead.rows[0]) return [];
     var cells = table.tHead.rows[0].cells;
-    var cols = [];
+    var explicit = [];
+    var byLabel = [];
     for (var i = 0; i < cells.length; i++) {
+      if (cells[i].hasAttribute("data-search-col")) explicit.push(i);
       var label = cells[i].textContent.trim().toLowerCase();
-      if (NAME_HEADERS[label]) cols.push(i);
+      if (NAME_HEADERS[label]) byLabel.push(i);
     }
-    return cols;
+    return explicit.length ? explicit : byLabel;
   }
 
   function rowText(row, cols) {

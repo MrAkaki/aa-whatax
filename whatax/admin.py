@@ -55,6 +55,12 @@ class MoonExtractionAdmin(admin.ModelAdmin):
     list_filter = ("status",)
 
 
+@admin.register(models.KosCharacter)
+class KosCharacterAdmin(admin.ModelAdmin):
+    list_display = ("character", "reason", "added_by", "added_at")
+    raw_id_fields = ("character", "added_by")
+
+
 admin.site.register(models.MiningSnapshot)
 admin.site.register(models.BalanceAdjustment)
 admin.site.register(models.TaxRecordEdit)

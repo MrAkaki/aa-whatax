@@ -13,6 +13,7 @@ from esi.decorators import token_required
 
 from whatax.decorators import (
     admin_required,
+    any_access_required,
     basic_access_required,
     staff_required,
     structures_required,
@@ -28,6 +29,7 @@ WALLET_TOKEN_SCOPES = ["esi-wallet.read_corporation_wallets.v1"]
 
 from whatax.core import matching, tax
 from whatax.core.aggregation import (
+    allowed_character_rows,
     player_ore_breakdown,
     player_ore_breakdown_for_month,
     unattributed_user,
@@ -39,6 +41,7 @@ from whatax.forms import (
     BalanceAdjustmentForm,
     CorporationTaxRateForm,
     GoodOreDefaultForm,
+    KosCharacterForm,
     MoonGroupForm,
     OffWalletPaymentForm,
     StructureGoodOreForm,
@@ -50,6 +53,7 @@ from whatax.models import (
     BalanceAdjustment,
     CorporationTaxRate,
     GoodOreDefault,
+    KosCharacter,
     MiningLedgerEntry,
     MiningStructure,
     MoonExtraction,
@@ -152,6 +156,22 @@ def _merge_frag_groups(current_frags, upcoming_frags):
     if None in buckets:
         grouped.append({"group": None, **buckets[None]})
     return grouped
+
+
+# --- Characters (any whatax role) -------------------------------------------
+
+
+@any_access_required
+def characters(request):
+    """Roster of allowed characters (by configured group) plus the KOS list."""
+    config = TaxConfiguration.objects.get_solo()
+    context = {
+        "active_tab": "characters",
+        "allowed_group": config.allowed_group,
+        "roster": allowed_character_rows(config.allowed_group),
+        "kos_entries": KosCharacter.objects.select_related("character"),
+    }
+    return render(request, "whatax/characters.html", context)
 
 
 # --- Staff ------------------------------------------------------------------
@@ -895,3 +915,56 @@ def moon_group_remove_structure(request, structure_id):
     structure.save(update_fields=["group"])
     messages.success(request, f"{structure} removed from its group.")
     return redirect("whatax:admin_groups")
+
+
+def _resolve_character_entity(name):
+    """Resolve a typed character name to its EveEntity via ESI; None if unknown."""
+    from eveuniverse.models import EveEntity
+
+    try:
+        matches = EveEntity.objects.fetch_by_names_esi([name])
+    except Exception:  # pragma: no cover - ESI/network failure is non-fatal
+        return None
+    return matches.filter(category=EveEntity.CATEGORY_CHARACTER).first()
+
+
+@admin_required
+def admin_kos(request):
+    """Manage the kill-on-sight list: add characters (ESI-resolved) and remove them."""
+    form = KosCharacterForm()
+
+    if request.method == "POST":
+        form = KosCharacterForm(request.POST)
+        if form.is_valid():
+            entity = _resolve_character_entity(form.cleaned_data["character_name"])
+            if entity is None:
+                messages.error(request, "No EVE character found with that name.")
+            else:
+                _, created = KosCharacter.objects.get_or_create(
+                    character=entity,
+                    defaults={
+                        "reason": form.cleaned_data["reason"],
+                        "added_by": request.user,
+                    },
+                )
+                if created:
+                    messages.success(request, f"{entity.name} added to KOS.")
+                else:
+                    messages.info(request, f"{entity.name} is already on the KOS list.")
+            return redirect("whatax:admin_kos")
+
+    context = {
+        "active_tab": "admin",
+        "kos_form": form,
+        "kos_entries": KosCharacter.objects.select_related("character", "added_by"),
+    }
+    return render(request, "whatax/admin_kos.html", context)
+
+
+@admin_required
+@require_POST
+def kos_delete(request, kos_id):
+    """Remove a character from the kill-on-sight list (admin)."""
+    get_object_or_404(KosCharacter, pk=kos_id).delete()
+    messages.success(request, "Removed from KOS.")
+    return redirect("whatax:admin_kos")

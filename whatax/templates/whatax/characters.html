@@ -1,0 +1,65 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+
+{% block whatax_content %}
+<div class="card mb-3">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span>{% translate "Allowed characters" %}</span>
+    {% if allowed_group %}
+      <span class="badge bg-secondary">{{ allowed_group.name }}</span>
+    {% endif %}
+  </div>
+  <div class="card-body table-responsive">
+    {% if not allowed_group %}
+      <p class="text-muted mb-0">
+        {% translate "No allowed group is configured yet. An admin can set it on the Admin tab." %}
+      </p>
+    {% else %}
+      <table class="table table-sm table-striped whatax-paginate">
+        <thead><tr>
+          <th>{% translate "Player" %}</th>
+          <th data-search-col>{% translate "Character" %}</th>
+        </tr></thead>
+        <tbody>
+        {% for row in roster %}
+          <tr>
+            <td>{{ row.player }}</td>
+            <td>{{ row.character }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="2" class="text-muted">{% translate "No characters in this group." %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><i class="fas fa-skull-crossbones"></i> {% translate "Kill on sight" %}</div>
+  <div class="card-body table-responsive">
+    <table class="table table-sm table-striped whatax-paginate">
+      <thead><tr>
+        <th data-search-col>{% translate "Character" %}</th>
+        <th>{% translate "Reason" %}</th>
+        <th>{% translate "Added" %}</th>
+      </tr></thead>
+      <tbody>
+      {% for entry in kos_entries %}
+        <tr>
+          <td class="d-flex align-items-center gap-2">
+            <img src="https://images.evetech.net/characters/{{ entry.character.id }}/portrait?size=32"
+                 alt="" width="24" height="24" class="rounded">
+            <span>{{ entry.character.name }}</span>
+          </td>
+          <td>{% if entry.reason %}{{ entry.reason }}{% else %}—{% endif %}</td>
+          <td>{{ entry.added_at|date:"Y-m-d" }}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="3" class="text-muted">{% translate "No characters on the KOS list." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

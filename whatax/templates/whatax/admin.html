@@ -150,6 +150,18 @@
   </div>
 </div>
 
+<div class="card mb-3">
+  <div class="card-header">{% translate "Kill on sight" %}</div>
+  <div class="card-body">
+    <p class="small text-muted mb-2">
+      {% translate "Maintain the KOS list shown to everyone on the Characters tab." %}
+    </p>
+    <a href="{% url 'whatax:admin_kos' %}" class="btn btn-primary btn-sm">
+      <i class="fas fa-skull-crossbones"></i> {% translate "Manage KOS list" %}
+    </a>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-header">{% translate "Calc & records" %}</div>
   <div class="card-body">

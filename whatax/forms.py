@@ -44,8 +44,12 @@ class TaxConfigurationForm(forms.ModelForm):
             "exclude_highsec",
             "exclude_lowsec",
             "exclude_nullsec",
+            "allowed_group",
             "is_enabled",
         ]
+        widgets = {
+            "allowed_group": forms.Select(attrs={"class": "form-select form-select-sm"}),
+        }
 
     def clean_janice_api_key(self):
         submitted = self.cleaned_data.get("janice_api_key", "")
@@ -137,6 +141,22 @@ class OffWalletPaymentForm(forms.Form):
                 "class": "form-control form-control-sm",
                 "placeholder": "How they paid / note",
             }
+        ),
+    )
+
+
+class KosCharacterForm(forms.Form):
+    """Add a kill-on-sight character by name; the view resolves it via ESI."""
+
+    character_name = forms.CharField(
+        widget=forms.TextInput(
+            attrs={"class": "form-control form-control-sm", "placeholder": "Character name"}
+        ),
+    )
+    reason = forms.CharField(
+        required=False,
+        widget=forms.TextInput(
+            attrs={"class": "form-control form-control-sm", "placeholder": "Reason (optional)"}
         ),
     )
 
