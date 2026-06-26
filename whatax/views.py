@@ -623,6 +623,28 @@ def record_waive(request, record_id):
 
 
 @admin_required
+@require_POST
+def clear_all_debts(request):
+    """Waive all outstanding (negative-balance) records across all users."""
+    records = (
+        TaxRecord.objects
+        .exclude(status__in=[TaxRecord.Status.PAID, TaxRecord.Status.WAIVED])
+        .prefetch_related("adjustments", "payments")
+    )
+    waived = 0
+    for record in records:
+        if record.balance < 0:
+            matching.add_balance_adjustment(
+                record, Decimal("0"), reason="WAIVED: bulk clear all debts", user=request.user
+            )
+            record.status = TaxRecord.Status.WAIVED
+            record.save(update_fields=["status"])
+            waived += 1
+    messages.success(request, f"Cleared {waived} outstanding debt(s).")
+    return redirect("whatax:admin")
+
+
+@admin_required
 def admin_config(request):
     """The dangerous configuration surface."""
     config = TaxConfiguration.objects.get_solo()

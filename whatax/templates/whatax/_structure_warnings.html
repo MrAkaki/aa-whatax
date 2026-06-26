@@ -71,7 +71,7 @@
           <table class="table table-sm mb-0">
             <thead><tr>
               <th>{% translate "Structure" %}</th><th>{% translate "System" %}</th>
-              <th>{% translate "Planned pop" %}</th><th>{% translate "Reason" %}</th>
+              <th>{% translate "Planned pop" %}</th>
             </tr></thead>
             <tbody>
             {% for w in warn_no_setup %}
@@ -79,7 +79,6 @@
                 <td>{{ w.structure.name|default:w.structure.structure_id }}</td>
                 <td>{{ w.structure.eve_solar_system.name|default:"—" }}</td>
                 <td>{% if w.structure.planned_pop_at %}{{ w.structure.planned_pop_at|date:"Y-m-d H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
-                <td>{{ w.reason }}</td>
               </tr>
             {% endfor %}
             </tbody>

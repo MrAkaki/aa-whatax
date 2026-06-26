@@ -45,6 +45,7 @@ urlpatterns = [
     # Admin
     path("record/<int:record_id>/waive/", views.record_waive, name="record_waive"),
     path("admin/", views.admin_config, name="admin"),
+    path("admin/clear-all-debts/", views.clear_all_debts, name="clear_all_debts"),
     path("admin/run-calc/", views.run_calc, name="run_calc"),
     path("admin/period-delete/", views.period_delete, name="period_delete"),
     path("admin/corp-rate/<int:rate_id>/delete/", views.corp_rate_delete, name="corp_rate_delete"),

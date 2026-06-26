@@ -162,6 +162,18 @@
   </div>
 </div>
 
+<div class="card mb-3">
+  <div class="card-header">{% translate "Debts" %}</div>
+  <div class="card-body">
+    <p class="small text-muted mb-2">{% translate "Waive every outstanding (negative-balance) record across all users and periods." %}</p>
+    <form method="post" action="{% url 'whatax:clear_all_debts' %}"
+          onsubmit="return confirm('{% translate "Waive ALL outstanding debts for ALL users? This cannot be undone." %}')">
+      {% csrf_token %}
+      <button class="btn btn-danger">{% translate "Clear all debts" %}</button>
+    </form>
+  </div>
+</div>
+
 <div class="card">
   <div class="card-header">{% translate "Calc & records" %}</div>
   <div class="card-body">
