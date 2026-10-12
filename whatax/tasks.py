@@ -376,31 +376,18 @@ def _apply_pop(note):
 
 @shared_task(**_RETRY)
 def sweep_structure_health():
-    """One hourly health pass: recompute dead % + DM staff on low fuel / off-schedule drift.
-
-    Recomputes moon dead status for popped extractions whose belt is still live and notifies on
-    transition, then sweeps active structures for low-fuel and pop-drift conditions,
-    all under one lock so both steps run atomically in the same cycle.
-    """
+    """One hourly health pass: recompute dead % for live belts and notify on transition."""
     if not _enabled():
         return
-    from whatax.models import MiningStructure
-    from whatax.notifications import notify_moon_dead, reconcile_low_fuel, reconcile_pop_drift
+    from whatax.notifications import notify_moon_dead
 
-    config = get_config()
     with _lock("sweep_structure_health") as ok:
         if not ok:
             return
 
-        # 1. Recompute dead % for non-terminal extractions and notify on transition.
         for extraction in moons.live_extractions():
             if moons.recompute_dead(extraction):
                 notify_moon_dead(extraction)
-
-        # 2. Sweep active structures for low-fuel reminders and off-schedule pop alerts.
-        for structure in MiningStructure.objects.active().select_related("group", "eve_solar_system"):
-            reconcile_low_fuel(structure, config)
-            reconcile_pop_drift(structure)
 
 
 @shared_task(**_RETRY)
