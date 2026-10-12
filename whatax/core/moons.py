@@ -83,6 +83,45 @@ def good_ore_ids_for(structure) -> set[int]:
     return (defaults - excludes) | includes
 
 
+# A popped belt despawns after 48h; ledger rows are date-granular, so allow the pop day + 2.
+BELT_LIFETIME_DAYS = 2
+
+
+def _pop_anchor(extraction) -> dt.datetime:
+    return extraction.popped_at or extraction.natural_decay_time or extraction.chunk_arrival_time
+
+
+def mining_window(extraction) -> tuple[dt.date, dt.date]:
+    """Inclusive ledger-date range in which this extraction's belt could have been mined."""
+    anchor = _pop_anchor(extraction)
+    if app_settings.WHATAX_DEAD_COUNT_FROM_POP:
+        lead = dt.timedelta(hours=app_settings.WHATAX_DEAD_POP_LEAD_HOURS)
+        start = (anchor - lead).date()
+    else:
+        start = min(extraction.chunk_arrival_time.date(), anchor.date())
+    return start, anchor.date() + dt.timedelta(days=BELT_LIFETIME_DAYS)
+
+
+def despawn_time(extraction) -> dt.datetime:
+    """When the popped belt expires (pop + 48h)."""
+    return _pop_anchor(extraction) + dt.timedelta(days=BELT_LIFETIME_DAYS)
+
+
+def live_extractions(now: dt.datetime | None = None):
+    """Popped extractions whose belt can still be mined (or only just despawned)."""
+    from django.db.models import Q
+
+    from whatax.models import MoonExtraction
+
+    now = now or eve_now()
+    cutoff = now - dt.timedelta(days=BELT_LIFETIME_DAYS + 1)
+    return MoonExtraction.objects.filter(status=MoonExtraction.Status.POPPED).filter(
+        Q(popped_at__gte=cutoff)
+        | Q(popped_at__isnull=True, natural_decay_time__gte=cutoff)
+        | Q(popped_at__isnull=True, natural_decay_time__isnull=True, chunk_arrival_time__gte=cutoff)
+    )
+
+
 def recompute_dead(extraction, threshold: Decimal | None = None) -> bool:
     """Recompute the dead-% and flip to ``dead`` past the threshold."""
     from whatax.models import MiningLedgerEntry, MoonExtraction
@@ -111,7 +150,9 @@ def recompute_dead(extraction, threshold: Decimal | None = None) -> bool:
 
     extraction.total_good_ore_m3 = total
 
-    # Numerator: good ore mined (ledger quantity × per-unit volume) since arrival.
+    # Numerator: good ore mined (ledger quantity × per-unit volume) within this belt's
+    # lifetime only; later mining at the same structure belongs to later extractions.
+    window_start, window_end = mining_window(extraction)
     volumes = {
         t.id: Decimal(str(t.volume or 0))
         for t in EveType.objects.filter(id__in=good_ore_ids)
@@ -119,7 +160,8 @@ def recompute_dead(extraction, threshold: Decimal | None = None) -> bool:
     rows = MiningLedgerEntry.objects.filter(
         structure=extraction.structure,
         ore_type_id__in=good_ore_ids,
-        recorded_date__gte=extraction.chunk_arrival_time.date(),
+        recorded_date__gte=window_start,
+        recorded_date__lte=window_end,
     )
     mined = sum(
         (Decimal(r.quantity) * volumes.get(r.ore_type_id, Decimal("0")) for r in rows),

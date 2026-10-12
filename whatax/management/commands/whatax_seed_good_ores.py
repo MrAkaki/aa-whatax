@@ -45,9 +45,7 @@ class Command(BaseCommand):
         from whatax.notifications import notify_moon_dead
 
         flipped = 0
-        actives = MoonExtraction.objects.exclude(
-            status__in=[MoonExtraction.Status.DEAD, MoonExtraction.Status.CANCELLED]
-        )
+        actives = MoonExtraction.objects.filter(status=MoonExtraction.Status.POPPED)
         for extraction in actives:
             if moons.recompute_dead(extraction):
                 flipped += 1

@@ -1,0 +1,52 @@
+{% extends "whatax/base.html" %}
+{% load i18n %}
+
+{% block whatax_content %}
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>{% translate "Ore despawned per pop" %}</span>
+    <span class="d-flex align-items-center gap-2">
+      <a class="btn btn-sm btn-outline-secondary"
+         href="?year={{ sel_year }}&month={{ sel_month }}&format=csv">{% translate "CSV" %}</a>
+      <span class="btn-group btn-group-sm">
+        <a class="btn btn-outline-primary" href="?year={{ prev_year }}&month={{ prev_month }}"
+           title="{% translate 'Previous month' %}">&larr;</a>
+        <span class="btn btn-outline-secondary disabled">{{ sel_year }}-{{ sel_month|stringformat:"02d" }}</span>
+        {% if has_next %}
+          <a class="btn btn-outline-primary" href="?year={{ next_year }}&month={{ next_month }}"
+             title="{% translate 'Next month' %}">&rarr;</a>
+        {% else %}
+          <span class="btn btn-outline-primary disabled">&rarr;</span>
+        {% endif %}
+      </span>
+    </span>
+  </div>
+  <div class="card-body table-responsive">
+    <p class="text-muted small">
+      {% translate "Ores from a pop's composition that nobody mined before the belt despawned (48h). The ledger is date-granular, so this is per day, not per hour. Pops with unknown composition or belts still alive are not listed." %}
+    </p>
+    <table class="table table-sm table-striped whatax-paginate">
+      <thead><tr>
+        <th data-search-col>{% translate "Moon" %}</th>
+        <th>{% translate "Pop (EVE)" %}</th>
+        <th data-search-col>{% translate "Ore despawned" %}</th>
+        <th class="text-end">{% translate "Volume m³" %}</th>
+        <th>{% translate "Good ore" %}</th>
+      </tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.moon }}</td>
+          <td>{{ r.pop|date:"Y-m-d H:i" }}</td>
+          <td>{{ r.ore }}</td>
+          <td class="text-end">{{ r.volume_m3|floatformat:0 }}</td>
+          <td>{% if r.is_good_ore %}{% translate "Yes" %}{% else %}{% translate "No" %}{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="5" class="text-muted">{% translate "No despawned ore recorded for this month." %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

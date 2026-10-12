@@ -13,6 +13,8 @@ urlpatterns = [
     path("structures/", views.structures, name="structures"),
     # Characters (any whatax role): allowed roster + KOS list
     path("characters/", views.characters, name="characters"),
+    # Ore despawns per pop, by month (admin)
+    path("despawns/", views.despawns, name="despawns"),
     # Staff
     path("staff/", views.staff, name="staff"),
     path("staff/outstanding/", views.staff_outstanding, name="staff_outstanding"),

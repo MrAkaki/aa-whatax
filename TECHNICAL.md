@@ -1003,6 +1003,8 @@ WHATAX_JANICE_MARKET_ID      = 2         # 2 = Jita
 WHATAX_PRICE_CACHE_TTL       = 3600      # seconds
 WHATAX_LEDGER_LOOKBACK_DAYS  = 30        # ESI observer depth
 WHATAX_DEAD_THRESHOLD        = 0.95      # good-ore fraction for "dead"
+WHATAX_DEAD_COUNT_FROM_POP   = True      # count mining only from pop - lead (False: from chunk arrival)
+WHATAX_DEAD_POP_LEAD_HOURS   = 2         # hours before the pop to start counting
 
 # Seed defaults only — the live values are TaxConfiguration fields (Admin tab):
 WHATAX_REPROCESSING_YIELD_DEFAULT   = 0.906
