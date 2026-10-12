@@ -209,8 +209,8 @@ correct.
 | `mineral_price_basis` | Char choices | Which Janice figure values minerals: `split/buy/sell` × `immediate/top5` (default `split_immediate`). **Edited in the Admin tab**; recorded on each snapshot. |
 | `grace_period_days` | PositiveSmallInt | Pay-by window: `due_date = emitted_at + grace_period_days`; a record past it with balance owed becomes `overdue`. |
 | `tax_edit_window_days` | PositiveSmallInt | Days after `emitted_at` during which **staff** may edit a bill's `tax_due` (default `15`, [§5.4](#54-payments) `TaxRecordEdit`). |
-| `fuel_warning_days` | PositiveSmallInt | Below this many days of fuel, `sweep_structure_health` DMs staff **daily** (default `7`, [§13](#13-scheduled-tasks-celery-beat)). |
-| `fuel_critical_days` | PositiveSmallInt | At/below this many days, the low-fuel DM escalates to **every 6h** (default `2`). |
+| `fuel_warning_days` | PositiveSmallInt | Unused since low-fuel DMs were removed (kept to avoid a migration). |
+| `fuel_critical_days` | PositiveSmallInt | Unused since low-fuel DMs were removed (kept to avoid a migration). |
 | `exclude_highsec` | Bool | Exclude all high-sec (≥0.5) mining from tax. |
 | `exclude_lowsec` | Bool | Exclude all low-sec (0.1–0.45) mining from tax. |
 | `exclude_nullsec` | Bool | Exclude all null-sec (≤0.0) mining from tax. |
@@ -830,20 +830,10 @@ All scheduled tasks must short-circuit when `TaxConfiguration.is_enabled` is
 False, and acquire a lock (Django cache lock / Celery `singleton`) to prevent
 overlapping runs of the same sync.
 
-**`sweep_structure_health` — staff DMs via `aadiscordbot`.** One hourly pass recomputes
-dead % for all non-terminal extractions (notifying on transition), then sweeps
-active structures for two staff-facing alerts, DM'd to every holder of
-`view_structures` or `manage_payments` (delivery degrades to a logged no-op if
-`aadiscordbot` isn't installed). *Low fuel:* a reminder whose cadence is derived
-from `fuel_days_left` — daily under `fuel_warning_days`, every 6h at/below
-`fuel_critical_days` — gated by `MiningStructure.notified_low_fuel_at` (the last
-send time) and cleared on refuel. *Off-schedule pop:* a **single** DM the first
-time `MiningStructure.is_off_schedule()` turns true (the same condition the
-structures **warning panel** shows), gated by `notified_drift_at` and cleared when
-the schedule realigns or staff accept the new cadence. Run it hourly: the 6h fuel
-step needs sub-6h granularity, but going faster than the feeding syncs
-(`sync_moon_extractions` hourly, `sync_structures` daily) surfaces nothing sooner —
-a drift can only be seen one `sync_moon_extractions` cycle after the new pop lands.
+**`sweep_structure_health`.** One hourly pass recomputes dead % for popped
+extractions whose belt is still live and posts the moon-dead webhook on transition.
+Low-fuel and off-schedule-pop DMs were removed: both conditions only show on the
+structures **warning panel**.
 
 ---
 
