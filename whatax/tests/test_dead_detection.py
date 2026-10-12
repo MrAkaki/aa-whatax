@@ -120,3 +120,48 @@ class RecomputeDeadTest(TestCase):
         self.assertTrue(crossed)
         self.assertEqual(self.extraction.status, MoonExtraction.Status.DEAD)
         self.assertTrue(self.extraction.ores.get(ore_type=self.ore).is_good_ore)
+
+    # Mining after the belt despawned must not count toward an older extraction.
+    def _mine_on(self, quantity, date):
+        MiningLedgerEntry.objects.create(
+            structure=self.structure,
+            character_id=43,
+            ore_type=self.ore,
+            quantity=quantity,
+            recorded_date=date,
+            recorded_corporation_id=1,
+        )
+
+    def test_later_mining_is_ignored(self):
+        GoodOreDefault.objects.create(ore_type=self.ore)
+        self.extraction.popped_at = _ARRIVAL + dt.timedelta(hours=3)
+        self.extraction.save(update_fields=["popped_at"])
+        self._mine(50)  # in-window: 0.50
+        self._mine_on(96, _ARRIVAL.date() + dt.timedelta(days=30))  # next belt's mining
+        self.assertFalse(moons.recompute_dead(self.extraction))
+        self.extraction.refresh_from_db()
+        self.assertEqual(self.extraction.status, MoonExtraction.Status.POPPED)
+        self.assertEqual(self.extraction.mined_good_ore_m3, Decimal("500"))
+
+    def test_live_extractions_excludes_stale_and_unpopped(self):
+        now = _ARRIVAL + dt.timedelta(days=30)
+        self.extraction.popped_at = _ARRIVAL
+        self.extraction.save(update_fields=["popped_at"])
+        self.assertFalse(moons.live_extractions(now).filter(pk=self.extraction.pk).exists())
+        self.assertTrue(
+            moons.live_extractions(_ARRIVAL + dt.timedelta(days=1))
+            .filter(pk=self.extraction.pk)
+            .exists()
+        )
+
+    def test_count_from_pop_skips_earlier_days(self):
+        from unittest import mock
+
+        GoodOreDefault.objects.create(ore_type=self.ore)
+        self.extraction.popped_at = _ARRIVAL + dt.timedelta(days=1, hours=6)
+        self.extraction.save(update_fields=["popped_at"])
+        self._mine(96)  # recorded on arrival day: before pop - 2h, previous belt's mining
+        with mock.patch.object(moons.app_settings, "WHATAX_DEAD_COUNT_FROM_POP", True):
+            self.assertFalse(moons.recompute_dead(self.extraction))
+        with mock.patch.object(moons.app_settings, "WHATAX_DEAD_COUNT_FROM_POP", False):
+            self.assertTrue(moons.recompute_dead(self.extraction))

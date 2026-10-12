@@ -24,6 +24,13 @@ WHATAX_LEDGER_LOOKBACK_DAYS = int(_get("WHATAX_LEDGER_LOOKBACK_DAYS", 30))
 # Good-ore fraction at which a moon is considered "dead".
 WHATAX_DEAD_THRESHOLD = Decimal(str(_get("WHATAX_DEAD_THRESHOLD", "0.95")))
 
+# Count mining toward dead-% only from the pop (notification time minus the lead below).
+# Off = count from the chunk arrival date.
+WHATAX_DEAD_COUNT_FROM_POP = bool(_get("WHATAX_DEAD_COUNT_FROM_POP", True))
+
+# Hours before the pop to start counting (ledger rows are date-granular).
+WHATAX_DEAD_POP_LEAD_HOURS = int(_get("WHATAX_DEAD_POP_LEAD_HOURS", 2))
+
 # --- Seed defaults for a new TaxConfiguration row (not the runtime authority) ---
 
 # Refined-value efficiency factor seed.

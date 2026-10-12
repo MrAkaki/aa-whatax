@@ -357,7 +357,7 @@ def _apply_pop(note):
     # fall back to the earliest non-popped row when none has a recorded arrival.
     candidates = MoonExtraction.objects.filter(
         structure__structure_id=structure_id
-    ).exclude(status=MoonExtraction.Status.POPPED)
+    ).exclude(status__in=[MoonExtraction.Status.POPPED, MoonExtraction.Status.DEAD])
     extraction = (
         candidates.filter(chunk_arrival_time__lte=note.timestamp)
         .order_by("-chunk_arrival_time")
@@ -378,13 +378,13 @@ def _apply_pop(note):
 def sweep_structure_health():
     """One hourly health pass: recompute dead % + DM staff on low fuel / off-schedule drift.
 
-    Recomputes moon dead status for all non-terminal extractions and notifies on
+    Recomputes moon dead status for popped extractions whose belt is still live and notifies on
     transition, then sweeps active structures for low-fuel and pop-drift conditions,
     all under one lock so both steps run atomically in the same cycle.
     """
     if not _enabled():
         return
-    from whatax.models import MiningStructure, MoonExtraction
+    from whatax.models import MiningStructure
     from whatax.notifications import notify_moon_dead, reconcile_low_fuel, reconcile_pop_drift
 
     config = get_config()
@@ -393,10 +393,7 @@ def sweep_structure_health():
             return
 
         # 1. Recompute dead % for non-terminal extractions and notify on transition.
-        actives = MoonExtraction.objects.exclude(
-            status__in=[MoonExtraction.Status.DEAD, MoonExtraction.Status.CANCELLED]
-        )
-        for extraction in actives:
+        for extraction in moons.live_extractions():
             if moons.recompute_dead(extraction):
                 notify_moon_dead(extraction)
 

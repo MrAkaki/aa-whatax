@@ -174,6 +174,49 @@ def characters(request):
     return render(request, "whatax/characters.html", context)
 
 
+@admin_required
+def despawns(request):
+    """Ores that despawned unmined per pop, by month (HTML or ?format=csv)."""
+    import csv
+
+    from django.http import HttpResponse
+
+    from whatax.core.despawns import despawned_ores
+
+    now = eve_now()
+    sel_year, sel_month = _selected_month(request, now)
+    rows = despawned_ores(sel_year, sel_month, now)
+
+    if request.GET.get("format") == "csv":
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = (
+            f'attachment; filename="ore_despawns_{sel_year}-{sel_month:02d}.csv"'
+        )
+        writer = csv.writer(response)
+        writer.writerow(["moon", "day_pop", "ore_despawned", "volume_m3", "good_ore"])
+        for r in rows:
+            writer.writerow(
+                [r["moon"], r["pop"].date().isoformat(), r["ore"], r["volume_m3"],
+                 "yes" if r["is_good_ore"] else "no"]
+            )
+        return response
+
+    prev_year, prev_month = (sel_year - 1, 12) if sel_month == 1 else (sel_year, sel_month - 1)
+    next_year, next_month = (sel_year + 1, 1) if sel_month == 12 else (sel_year, sel_month + 1)
+    context = {
+        "active_tab": "despawns",
+        "rows": rows,
+        "sel_year": sel_year,
+        "sel_month": sel_month,
+        "prev_year": prev_year,
+        "prev_month": prev_month,
+        "next_year": next_year,
+        "next_month": next_month,
+        "has_next": (sel_year, sel_month) < (now.year, now.month),
+    }
+    return render(request, "whatax/despawns.html", context)
+
+
 # --- Staff ------------------------------------------------------------------
 
 
