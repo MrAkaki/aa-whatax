@@ -23,7 +23,7 @@
   </div>
   <div class="card-body table-responsive">
     <p class="text-muted small">
-      {% translate "Ores from a pop's composition that nobody mined before the belt despawned (48h). The ledger is date-granular, so this is per day, not per hour. Pops with unknown composition or belts still alive are not listed." %}
+      {% translate "Ores from a pop's composition that nobody mined before the belt despawned (48h). “% of chunk” is that ore's share of the whole chunk; “Pop despawned %” is the total share of the chunk that despawned for that pop. The ledger is date-granular, so this is per day, not per hour. Pops with unknown composition or belts still alive are not listed." %}
     </p>
     <table class="table table-sm table-striped whatax-paginate">
       <thead><tr>
@@ -31,6 +31,8 @@
         <th>{% translate "Pop (EVE)" %}</th>
         <th data-search-col>{% translate "Ore despawned" %}</th>
         <th class="text-end">{% translate "Volume m³" %}</th>
+        <th class="text-end">{% translate "% of chunk" %}</th>
+        <th class="text-end">{% translate "Pop despawned %" %}</th>
         <th>{% translate "Good ore" %}</th>
       </tr></thead>
       <tbody>
@@ -40,10 +42,12 @@
           <td>{{ r.pop|date:"Y-m-d H:i" }}</td>
           <td>{{ r.ore }}</td>
           <td class="text-end">{{ r.volume_m3|floatformat:0 }}</td>
+          <td class="text-end">{{ r.pct_of_chunk }}%</td>
+          <td class="text-end">{{ r.pop_despawn_pct }}%</td>
           <td>{% if r.is_good_ore %}{% translate "Yes" %}{% else %}{% translate "No" %}{% endif %}</td>
         </tr>
       {% empty %}
-        <tr><td colspan="5" class="text-muted">{% translate "No despawned ore recorded for this month." %}</td></tr>
+        <tr><td colspan="7" class="text-muted">{% translate "No despawned ore recorded for this month." %}</td></tr>
       {% endfor %}
       </tbody>
     </table>

@@ -50,6 +50,13 @@ class DespawnedOresTest(TestCase):
         rows = despawned_ores(2026, 8, _NOW)
         self.assertEqual([r["ore"] for r in rows], ["Sylvite"])
         self.assertEqual(rows[0]["moon"], "Moon A")
+        # Sylvite is 1000 of the 2000 m³ chunk.
+        self.assertEqual(rows[0]["pct_of_chunk"], Decimal("50.0"))
+        self.assertEqual(rows[0]["pop_despawn_pct"], Decimal("50.0"))
+
+    def test_fully_unmined_pop_is_100_percent(self):
+        rows = despawned_ores(2026, 8, _NOW)
+        self.assertEqual({r["pop_despawn_pct"] for r in rows}, {Decimal("100.0")})
 
     def test_mining_after_belt_expiry_does_not_count(self):
         self._mine(self.left, _POP.date() + dt.timedelta(days=10))

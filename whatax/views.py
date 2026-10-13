@@ -193,11 +193,13 @@ def despawns(request):
             f'attachment; filename="ore_despawns_{sel_year}-{sel_month:02d}.csv"'
         )
         writer = csv.writer(response)
-        writer.writerow(["moon", "day_pop", "ore_despawned", "volume_m3", "good_ore"])
+        writer.writerow(
+            ["moon", "day_pop", "ore_despawned", "volume_m3", "pct_of_chunk", "pop_despawn_pct", "good_ore"]
+        )
         for r in rows:
             writer.writerow(
                 [r["moon"], r["pop"].date().isoformat(), r["ore"], r["volume_m3"],
-                 "yes" if r["is_good_ore"] else "no"]
+                 r["pct_of_chunk"], r["pop_despawn_pct"], "yes" if r["is_good_ore"] else "no"]
             )
         return response
 
