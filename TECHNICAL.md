@@ -513,8 +513,10 @@ tokens directly.
   for keeping the structure-fan-out affordable.
 - **Error budget / 420:** ESI enforces an error-rate limit (the `X-ESI-Error-Limit-*`
   headers). Centralize handling in `providers.py`: on `420`/`5xx`, back off
-  with jitter and let Celery retry (`autoretry_for`, `retry_backoff=True`,
-  capped `max_retries`). Never tight-loop on errors.
+  with jitter and let Celery retry (`autoretry_for`, capped `max_retries=3`).
+  Tasks use `_BackoffTask` (`tasks.py`): retries after 1, 5, then 25 minutes
+  (+-10%), and no sooner than the reset of an exhausted ESI bucket
+  (`ESIBucketLimitException.reset`). Never tight-loop on errors.
 - **Fan-out:** one structure = one observer call. Dispatch per-structure as
   independent Celery subtasks (a chord/group) so one slow/failing structure
   doesn't block the rest, and so retries are isolated.

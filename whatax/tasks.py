@@ -2,12 +2,13 @@
 
 import datetime as dt
 import logging
+import random
 from contextlib import contextmanager
 from decimal import Decimal
 
-from celery import shared_task
+from celery import Task, shared_task
 from django.core.cache import cache
-from esi.exceptions import HTTPNotModified
+from esi.exceptions import ESIBucketLimitException, HTTPNotModified
 from eveuniverse.models import EveMoon, EveSolarSystem, EveType
 
 from whatax import providers
@@ -18,7 +19,29 @@ from whatax.core.timeutils import eve_now, month_bounds, previous_month
 logger = logging.getLogger(__name__)
 
 _LOCK_TTL = 3600  # seconds; auto-expires so a crashed task can't wedge.
-_RETRY = dict(autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, max_retries=5)
+_RETRY_MINUTES = (1, 5, 25)
+
+
+class _BackoffTask(Task):
+    """Retry after 1, 5, then 25 minutes (+-10%).
+
+    The default 1-16s exponential backoff burns every retry long before an ESI
+    bucket (reset in minutes) refills, so fan-out tasks hammer a dry bucket.
+    When the ESI bucket is the cause, wait at least until it resets.
+    """
+
+    def retry(self, args=None, kwargs=None, exc=None, throw=True, eta=None, countdown=None, max_retries=None, **options):
+        if eta is None and countdown is None:
+            countdown = _RETRY_MINUTES[min(self.request.retries, len(_RETRY_MINUTES) - 1)] * 60
+            if isinstance(exc, ESIBucketLimitException):
+                countdown = max(countdown, exc.reset + 1)
+            countdown *= random.uniform(0.9, 1.1)
+        return super().retry(
+            args=args, kwargs=kwargs, exc=exc, throw=throw, eta=eta, countdown=countdown, max_retries=max_retries, **options
+        )
+
+
+_RETRY = dict(base=_BackoffTask, autoretry_for=(Exception,), max_retries=len(_RETRY_MINUTES))
 
 
 @contextmanager
